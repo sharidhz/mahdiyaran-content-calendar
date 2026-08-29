@@ -1,0 +1,1595 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head><script>(function(){
+  var PREFIX="/app", ORIGIN="https://chatgpt.com";
+  var WS_DIRECT=false;
+  // Service Worker ChatGPT را غیرفعال کن: روی موبایل HTML/اسکریپتِ قدیمی را کش می‌کند و درخواست‌ها را
+  // دستکاری می‌کند (ارسال پیام/آپلود خراب می‌شود و اسکریپتِ جدیدِ ما نمی‌آید).
+  try{ if(navigator.serviceWorker){
+    if(navigator.serviceWorker.getRegistrations) navigator.serviceWorker.getRegistrations().then(function(rs){ rs.forEach(function(r){ try{ r.unregister(); }catch(e){} }); }).catch(function(){});
+    navigator.serviceWorker.register=function(){ return Promise.reject(new Error('sw disabled')); };
+  } }catch(e){}
+  // Remove old Service Worker CacheStorage once per client build. This does
+  // not touch login cookies, local chat data, or the normal HTTP asset cache.
+  try{ var cr='20260825-edge-storage-v1'; if(localStorage.getItem('hg_cache_rev')!==cr){
+    localStorage.setItem('hg_cache_rev',cr);
+    if(window.caches&&caches.keys) caches.keys().then(function(ks){ return Promise.all(ks.map(function(k){ return caches.delete(k); })); }).catch(function(){});
+  } }catch(e){}
+  var EXT=/^https?:\/\/[a-z0-9.-]*\.(oaiusercontent\.com|blob\.core\.windows\.net)(\/|$)/i;
+  function ext(u){ try{ if(u&&EXT.test(u)) return PREFIX+'/__ext?u='+encodeURIComponent(u); }catch(e){} return u; }
+  function fix(u){ try{ if(u==null) return u; u=String(u);
+    if(EXT.test(u)) return ext(u);
+    if(u.indexOf(PREFIX+'/')===0) return u;
+    if(u.indexOf(ORIGIN)===0) return PREFIX+u.slice(ORIGIN.length);
+    // آدرس‌های نسبی/هم‌مبدأ را دست نمی‌زنیم؛ portal آن‌ها را هم پروکسی می‌کند.
+    // (پیشوندِ /app نمی‌زنیم تا مجبور به بازسازیِ Request نشویم؛ سافاری با بازسازیِ Requestِ POST خراب می‌کرد)
+    return u; }catch(e){ return u; } }
+  try{ Object.defineProperty(window,'__reactRouterContext',{configurable:true,
+    set:function(v){ if(v&&typeof v==='object'){v.basename=PREFIX;} this._rrc=v; },
+    get:function(){ return this._rrc; }}); }catch(e){}
+  var of=window.fetch;
+  // ---- ⛔ هیچ دخالتی در نمایشِ عکس نداریم ----
+  // قبلاً این‌جا رفرشِ خودکار و بعد تزریقِ دستیِ عکس بود؛ هر دو حذف شدند چون:
+  // (۱) رفرشِ کلِ صفحه تجربهٔ مشتری را خراب می‌کرد و گاهی صفحهٔ لاگ‌اوت بالا می‌آمد،
+  // (۲) تزریقِ دستی در ویرایشِ عکس، عکسِ **قبلی** را به‌جای عکسِ جدید می‌گذاشت
+  //     (idها از کلِ کانورسیشن خوانده می‌شدند و به frame درست نگاشت نمی‌شدند).
+  // حالا مثل سابینجا: فقط آدرس‌ها بازنویسی می‌شوند و خودِ ChatGPT عکس را از WS نشان می‌دهد.
+  // ⚠️ پس نمایشِ عکس کاملاً به سالم‌بودنِ WebSocket وابسته است → حالتِ اکانت باید «مستقیم» باشد.
+  // ---- (کدِ قدیمیِ حذف‌شده) ----
+  // (همهٔ توابعِ نگهبانِ عکس حذف شدند: curConv/hasPh/showImages/pollImgReady/noteImgActivity/scanForImage)
+  // تشخیصِ خودکارِ خرابیِ سشن (مودالِ expired) → گزارش به سرور → اگر جایگزینِ سالمی بود، بی‌سروصدا reload روی همان
+  var reconBusy=false;
+  function checkBroken(){ try{
+    if(reconBusy||!document.getElementById('modal-expired-session')) return;
+    if(Date.now()-(+(sessionStorage.getItem('hg_recon')||0))<15000) return; // قفلِ ضدِ حلقه
+    reconBusy=true;
+    fetch(PREFIX+'/__reportbroken',{method:'POST',headers:{'content-type':'application/json'}})
+      .then(function(r){return r.json();})
+      .then(function(j){ reconBusy=false; sessionStorage.setItem('hg_recon',String(Date.now())); if(j&&j.reload) location.reload(); })
+      .catch(function(){ reconBusy=false; });
+  }catch(e){ reconBusy=false; } }
+  setInterval(checkBroken,2000);
+  window.fetch=function(input,init){
+    var ou=(typeof input==='string')?input:((input&&input.url)||'');
+    // Bearer را از درخواست‌های خودِ اپ بقاپ (برای چکِ کانورسیشن؛ بدونِ Bearer=۴۰۴)
+    try{ var hh=(init&&init.headers)||(typeof input!=='string'&&input&&input.headers); if(hh){ var av=hh.get?hh.get('authorization'):(hh.authorization||hh.Authorization); if(av&&/^bearer /i.test(av)) window.__hgB=av; } }catch(e){}
+    var meth=(init&&init.method)||(input&&input.method)||'GET';
+    var self=this;
+    try{ if(typeof input==='string'){input=fix(input);}
+      else if(input&&input.url){ var nu=fix(input.url); if(nu!==input.url) input=new Request(nu,input); } }catch(e){}
+    // پاسخ دست‌نخورده رد می‌شود (هیچ اسکن/دخالتی در استریمِ چت نداریم)
+    function withScan(p){ return p; }
+    // بدنه‌ی استریمی (ReadableStream) را بافر کن — موبایل/سافاری/HTTP1.1 آپلودِ استریمی را رد می‌کنند
+    // ("ReadableStream uploading is not supported")؛ با بافر، به بدنه‌ی معمولی تبدیل و روی همه کار می‌کند.
+    try{
+      // حالت ۱: fetch(url, {body: ReadableStream})
+      if(init&&init.body&&typeof init.body.getReader==='function'){
+        return new Response(init.body).arrayBuffer().then(function(buf){
+          var ni={}; for(var k in init) ni[k]=init[k]; ni.body=buf; try{delete ni.duplex;}catch(e){}
+          return withScan(of.call(self,input,ni));
+        });
+      }
+      // حالت ۲: fetch(Request) که خودِ Request بدنه‌ی استریمی دارد (روشِ ارسالِ ChatGPT)
+      if((!init||init.body==null)&&input&&typeof input!=='string'&&input.method&&input.body&&typeof input.body.getReader==='function'){
+        var req0=input;
+        return req0.clone().arrayBuffer().then(function(buf){
+          var r=new Request(req0.url,{method:req0.method,headers:req0.headers,body:(buf&&buf.byteLength?buf:undefined),mode:req0.mode,credentials:req0.credentials,cache:req0.cache,redirect:req0.redirect,referrer:req0.referrer,integrity:req0.integrity,keepalive:req0.keepalive});
+          return withScan(of.call(self,r));
+        });
+      }
+    }catch(e){}
+    return withScan(of.call(self,input,init)); };
+  var xo=XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open=function(m,u){ arguments[1]=fix(u); return xo.apply(this,arguments); };
+  // دانلود/بازکردنِ فایل با window.open هم از پروکسی رد شود (وگرنه مستقیم به chatgpt.com می‌رود → access denied)
+  var ow=window.open;
+  window.open=function(u){ try{ if(typeof u==='string') arguments[0]=fix(u); }catch(e){} return ow.apply(this,arguments); };
+  // دانلودِ برنامه‌ای (ساختِ <a> و کلیکِ فوری) از observer فرار می‌کند؛ پس درست قبل از کلیک، href را بازنویسی کن.
+  try{ var acl=HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click=function(){ try{ var h=this.getAttribute&&this.getAttribute('href');
+      if(h){ var nh=fix(h); if(nh!==h) this.setAttribute('href',nh); } }catch(e){} return acl.apply(this,arguments); };
+  }catch(e){}
+  // اگر با location به فایل می‌رود، آن را هم بازنویسی کن
+  try{ var la=window.location.assign.bind(window.location);
+    window.location.assign=function(u){ try{ u=fix(String(u)); }catch(e){} return la(u); }; }catch(e){}
+  // WebSocket: حالتِ مستقیم (WS_DIRECT، سبک Subinja) = بدونِ override، مرورگر مستقیم به wss://chatgpt.com
+  // (سریع‌تر، موبایل و عکسِ زنده کار می‌کند؛ ولی IP مشتری به chatgpt.com می‌رسد).
+  // حالتِ مخفی (WS_DIRECT=false) = بازنویسی به سرورِ ما (IP پنهان ولی WS معمولاً وصل نمی‌شود).
+  if(!WS_DIRECT){ var OW=window.WebSocket;
+    if(OW){ window.WebSocket=function(u,p){ try{ if(typeof u==='string'){
+      if(u.indexOf('wss://'+location.host)===0||u.indexOf('ws://'+location.host)===0){}
+      else { var m=u.match(/^wss?:\/\/([^/]+)(\/.*)$/); if(m){
+        // ⭐ هاستِ اصلی را نگه دار و به سرور بگو. ChatGPT از دامنهٔ جدا (ws.chatgpt.com) استفاده می‌کند
+        // و اگر گمش کنیم، سرور به chatgpt.com وصل می‌شود که Cloudflare چالشش می‌دهد.
+        var sep=m[2].indexOf('?')>=0?'&':'?';
+        u=(location.protocol==='https:'?'wss://':'ws://')+location.host+PREFIX+m[2]+sep+'__hgws='+encodeURIComponent(m[1]);
+      } } }
+    }catch(e){} return p?new OW(u,p):new OW(u); }; window.WebSocket.prototype=OW.prototype; } }
+
+  // ---- بازنویسی src/srcset عکس‌های خارجی (پیش‌نمایش عکسِ ساخته‌شده) ----
+  function rwSrcset(v){ try{ return v.split(',').map(function(p){ var t=p.trim().split(/\s+/); t[0]=fix(t[0]); return t.join(' '); }).join(', '); }catch(e){ return v; } }
+  function rwImg(el){ try{
+    if(el.tagName==='IMG'||el.tagName==='SOURCE'){
+      var s=el.getAttribute&&el.getAttribute('src'); if(s){ var n=fix(s); if(n!==s) el.setAttribute('src',n); }
+      var ss=el.getAttribute&&el.getAttribute('srcset'); if(ss){ var m2=rwSrcset(ss); if(m2!==ss) el.setAttribute('srcset',m2); }
+    } }catch(e){} }
+  // فقط لینک‌های مطلقِ chatgpt.com یا رسانه‌ی خارجی را بازنویسی کن (دانلود/پیش‌نمایشِ فایل) — نه لینک‌های داخلیِ نسبی
+  function rwHref(el){ try{ var h=el.getAttribute&&el.getAttribute('href'); if(!h) return;
+    if(h.indexOf(ORIGIN)===0) el.setAttribute('href',PREFIX+h.slice(ORIGIN.length));
+    else if(EXT.test(h)) el.setAttribute('href',ext(h)); }catch(e){} }
+  function scanNode(el){ if(!el||!el.tagName) return; var t=el.tagName;
+    if(t==='IMG'||t==='SOURCE') rwImg(el); else if(t==='A') rwHref(el); }
+  function scanImgs(root){ try{ scanNode(root);
+    if(root.querySelectorAll) root.querySelectorAll('img,source,a[href]').forEach(scanNode); }catch(e){} }
+
+  // ---- اعمال قوانین تغییر متن (تعریف‌شده در پنل ادمین) ----
+  var TEXT_RULES=[];
+  function applyText(){ try{ TEXT_RULES.forEach(function(r){ if(!r||!r.sel) return;
+    document.querySelectorAll(r.sel).forEach(function(el){ if(el.textContent!==r.text) el.textContent=r.text; }); }); }catch(e){} }
+
+  function tick(root){ scanImgs(root||document); applyText(); }
+  var mo=new MutationObserver(function(muts){ for(var i=0;i<muts.length;i++){ var m=muts[i];
+    if(m.type==='attributes'&&m.target) scanNode(m.target);
+    if(m.addedNodes) for(var j=0;j<m.addedNodes.length;j++){ var n=m.addedNodes[j]; if(n.nodeType===1) scanImgs(n); } }
+    applyText(); });
+  function boot(){ tick(document); mo.observe(document.documentElement,{subtree:true,childList:true,attributes:true,attributeFilter:['src','srcset','href']}); }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',boot); else boot();
+})();</script><style id="hg-ui-style">/* ==================================================
+   تنظیمات حساب
+================================================== */
+
+nav a[href*="/settings" i],
+[data-testid*="settings" i],
+[data-testid="settings-menu-item"] {
+    display: none !important;
+}
+
+
+/* ==================================================
+   پلن، قیمت‌گذاری و پرداخت
+================================================== */
+
+a[href*="#pricing" i],
+a[aria-label*="plans" i],
+a[aria-label*="pricing" i],
+[data-testid="modal-account-payment"] {
+    display: none !important;
+}
+
+
+/* ==================================================
+   Library
+================================================== */
+
+a[href*="/library" i],
+[data-testid*="sidebar-item-library" i] {
+    display: none !important;
+}
+
+
+/* ==================================================
+   خروج و منوی حساب
+================================================== */
+
+[data-testid="log-out-menu-item"],
+[data-testid="modal-user-context"] {
+    display: none !important;
+}
+
+
+/* ==================================================
+   Codex و Tasks
+================================================== */
+
+a[href*="/codex" i],
+[data-radix-menu-content] a[href*="/tasks" i] {
+    display: none !important;
+}
+
+
+/* ==================================================
+   Agents
+================================================== */
+
+a[href*="/agents" i],
+[data-testid*="agents" i] {
+    display: none !important;
+}
+
+
+/* ==================================================
+   GPTs
+================================================== */
+
+a[href*="/gpts" i],
+[data-testid*="gpts" i] {
+    display: none !important;
+}
+
+
+/* ==================================================
+   Scheduled
+================================================== */
+
+a[href*="/scheduled" i],
+[data-testid*="scheduled" i] {
+    display: none !important;
+}
+
+
+/* ==================================================
+   دعوت اعضای تیم
+================================================== */
+
+div.px-3\.5.pt-1.pb-3:has(> button) {
+    display: none !important;
+}
+
+
+/* ==================================================
+   Add from library
+================================================== */
+
+div[tabindex="0"].__menu-item:has(use[href$="#library"]) {
+    display: none !important;
+    pointer-events: none !important;
+}
+
+
+/* ==================================================
+   منوی دانلود نسخه موبایل و دسکتاپ
+================================================== */
+
+button[aria-label="Download apps"] {
+    display: none !important;
+    pointer-events: none !important;
+}
+
+
+/* ==================================================
+   تغییر نام بالای پروفایل به Gpt
+================================================== */
+
+[data-testid="accounts-profile-button"]
+> div.flex.min-w-0.items-center.gap-2
+> div.min-w-0
+> div:first-child
+> .truncate {
+    position: relative;
+    font-size: 0 !important;
+}
+
+[data-testid="accounts-profile-button"]
+> div.flex.min-w-0.items-center.gap-2
+> div.min-w-0
+> div:first-child
+> .truncate::after {
+    content: "Gpt";
+    color: inherit;
+    font-size: 14px;
+    font-weight: 500;
+}
+
+
+/* ==================================================
+   تغییر نوشته پایین پروفایل به Plus
+================================================== */
+
+[data-testid="accounts-profile-button"]
+> div.flex.min-w-0.items-center.gap-2
+> div.min-w-0
+> div:nth-child(2)
+> .truncate {
+    position: relative;
+    font-size: 0 !important;
+}
+
+[data-testid="accounts-profile-button"]
+> div.flex.min-w-0.items-center.gap-2
+> div.min-w-0
+> div:nth-child(2)
+> .truncate::after {
+    content: "Plus";
+    color: inherit;
+    font-size: 12px;
+    font-weight: 400;
+}
+
+
+/* ==================================================
+   غیرفعال‌کردن دکمه پروفایل
+================================================== */
+
+[data-testid="accounts-profile-button"] {
+    pointer-events: none !important;
+    cursor: default !important;
+}
+
+
+/* ==================================================
+   حفظ ظاهر اسلایدر Power
+================================================== */
+
+[data-model-reasoning-effort-slider] {
+    position: relative !important;
+}
+
+
+/* ==================================================
+   مسدودکردن محدوده Extra High و Pro در اسلایدر
+================================================== */
+
+[data-model-reasoning-effort-slider]::after {
+    content: "";
+    position: absolute;
+    z-index: 50;
+    top: 0;
+    right: 0;
+    width: 37.5%;
+    height: 100%;
+    pointer-events: auto;
+    cursor: not-allowed;
+    background: transparent;
+}
+
+
+/* ==================================================
+   حذف Extra High و Pro از Advanced → Effort
+   Instant، Medium و High باقی می‌مانند
+================================================== */
+
+[data-radix-menu-content][data-side="right"]
+> [role="group"]:has(> [role="menuitemradio"]:nth-child(5):last-child)
+> [role="menuitemradio"]:nth-child(n+4) {
+    display: none !important;
+    pointer-events: none !important;
+}
+</style><style>
+#hg-fab{position:fixed;z-index:2147483000;right:16px;left:auto;bottom:150px;font-family:Tahoma,system-ui,sans-serif;opacity:.5;transition:opacity .2s;touch-action:none}
+#hg-fab:hover,#hg-fab.open,#hg-fab.dragging{opacity:1}
+@media (max-width:640px){#hg-fab{bottom:170px}}
+#hg-fab .hg-btn{width:46px;height:46px;border-radius:50%;border:0;cursor:grab;background:#1f2430;color:#e8eaf2;font-size:20px;box-shadow:0 6px 18px rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;touch-action:none;user-select:none}
+#hg-fab.dragging .hg-btn{cursor:grabbing}
+#hg-fab .hg-menu{position:absolute;bottom:56px;right:0;left:auto;background:#171a2b;color:#e8eaf2;border:1px solid #2b3050;border-radius:14px;padding:10px;min-width:210px;box-shadow:0 16px 40px rgba(0,0,0,.5);display:none}
+#hg-fab.open .hg-menu{display:block}
+#hg-fab .hg-h{font-size:12px;color:#9aa0b5;padding:4px 8px 8px;border-bottom:1px solid #2b3050;margin-bottom:8px;direction:rtl;text-align:right}
+#hg-fab .hg-h b{color:#e8eaf2}
+#hg-fab .hg-logout{width:100%;padding:10px;border:0;border-radius:10px;background:rgba(255,92,108,.14);color:#ff8a95;font-weight:700;cursor:pointer;font-size:13px;font-family:inherit}
+#hg-fab .hg-logout:hover{background:rgba(255,92,108,.22)}
+</style>
+<script>(function(){
+  var NAME="Chatgpt Pl 4";
+  function build(){
+    var f=document.createElement('div'); f.id='hg-fab'; f.dir='rtl';
+    f.innerHTML='<div class="hg-menu"><div class="hg-h">اکانت: <b>'+NAME+'</b></div>'+
+      '<button class="hg-logout">🚪 خروج از اکانت</button></div>'+
+      '<button class="hg-btn" title="بکش برای جابه‌جایی · بزن برای منو">☰</button>';
+    // بازیابیِ موقعیتِ ذخیره‌شده
+    try{ var pos=JSON.parse(localStorage.getItem('hg_fab_pos')||'null');
+      if(pos&&pos.left!=null){ f.style.left=pos.left+'px'; f.style.top=pos.top+'px'; f.style.right='auto'; f.style.bottom='auto'; } }catch(e){}
+    var btn=f.querySelector('.hg-btn');
+    var drag=false, moved=false, sx=0, sy=0, ox=0, oy=0;
+    btn.addEventListener('pointerdown',function(e){ drag=true; moved=false; sx=e.clientX; sy=e.clientY;
+      var r=f.getBoundingClientRect(); ox=r.left; oy=r.top; f.classList.add('dragging');
+      try{ btn.setPointerCapture(e.pointerId); }catch(_){} e.preventDefault(); });
+    btn.addEventListener('pointermove',function(e){ if(!drag) return;
+      var dx=e.clientX-sx, dy=e.clientY-sy; if(Math.abs(dx)+Math.abs(dy)>5) moved=true;
+      var nl=Math.max(4,Math.min(window.innerWidth-52,ox+dx)), nt=Math.max(4,Math.min(window.innerHeight-52,oy+dy));
+      f.style.left=nl+'px'; f.style.top=nt+'px'; f.style.right='auto'; f.style.bottom='auto'; });
+    btn.addEventListener('pointerup',function(e){ if(!drag) return; drag=false; f.classList.remove('dragging');
+      if(moved){ try{ var r=f.getBoundingClientRect(); localStorage.setItem('hg_fab_pos',JSON.stringify({left:Math.round(r.left),top:Math.round(r.top)})); }catch(_){} }
+      else { f.classList.toggle('open'); } });
+    f.querySelector('.hg-logout').addEventListener('click',function(){
+      if(confirm('از حساب خارج می‌شوید؟ پس از خروج، این دستگاه آزاد می‌شود و می‌توانید از دستگاه دیگری وارد شوید.')) location.href='/logout';
+    });
+    document.addEventListener('click',function(e){ if(!f.contains(e.target)) f.classList.remove('open'); });
+    return f;
+  }
+  function ensure(){ if(!document.getElementById('hg-fab')&&document.body){ document.body.appendChild(build()); } }
+  function start(){ ensure();
+    try{ new MutationObserver(ensure).observe(document.documentElement,{childList:true,subtree:true}); }catch(e){}
+    setInterval(ensure,1500);
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',start); else start();
+})();</script><script>(function(){
+  var PREFIX="/app", ORIGIN="/app";
+  var WS_DIRECT=false;
+  // Service Worker ChatGPT را غیرفعال کن: روی موبایل HTML/اسکریپتِ قدیمی را کش می‌کند و درخواست‌ها را
+  // دستکاری می‌کند (ارسال پیام/آپلود خراب می‌شود و اسکریپتِ جدیدِ ما نمی‌آید).
+  try{ if(navigator.serviceWorker){
+    if(navigator.serviceWorker.getRegistrations) navigator.serviceWorker.getRegistrations().then(function(rs){ rs.forEach(function(r){ try{ r.unregister(); }catch(e){} }); }).catch(function(){});
+    navigator.serviceWorker.register=function(){ return Promise.reject(new Error('sw disabled')); };
+  } }catch(e){}
+  // Remove old Service Worker CacheStorage once per client build. This does
+  // not touch login cookies, local chat data, or the normal HTTP asset cache.
+  try{ var cr='20260825-edge-storage-v1'; if(localStorage.getItem('hg_cache_rev')!==cr){
+    localStorage.setItem('hg_cache_rev',cr);
+    if(window.caches&&caches.keys) caches.keys().then(function(ks){ return Promise.all(ks.map(function(k){ return caches.delete(k); })); }).catch(function(){});
+  } }catch(e){}
+  var EXT=/^https?:\/\/[a-z0-9.-]*\.(oaiusercontent\.com|blob\.core\.windows\.net)(\/|$)/i;
+  function ext(u){ try{ if(u&&EXT.test(u)) return PREFIX+'/__ext?u='+encodeURIComponent(u); }catch(e){} return u; }
+  function fix(u){ try{ if(u==null) return u; u=String(u);
+    if(EXT.test(u)) return ext(u);
+    if(u.indexOf(PREFIX+'/')===0) return u;
+    if(u.indexOf(ORIGIN)===0) return PREFIX+u.slice(ORIGIN.length);
+    // آدرس‌های نسبی/هم‌مبدأ را دست نمی‌زنیم؛ portal آن‌ها را هم پروکسی می‌کند.
+    // (پیشوندِ /app نمی‌زنیم تا مجبور به بازسازیِ Request نشویم؛ سافاری با بازسازیِ Requestِ POST خراب می‌کرد)
+    return u; }catch(e){ return u; } }
+  try{ Object.defineProperty(window,'__reactRouterContext',{configurable:true,
+    set:function(v){ if(v&&typeof v==='object'){v.basename=PREFIX;} this._rrc=v; },
+    get:function(){ return this._rrc; }}); }catch(e){}
+  var of=window.fetch;
+  // ---- ⛔ هیچ دخالتی در نمایشِ عکس نداریم ----
+  // قبلاً این‌جا رفرشِ خودکار و بعد تزریقِ دستیِ عکس بود؛ هر دو حذف شدند چون:
+  // (۱) رفرشِ کلِ صفحه تجربهٔ مشتری را خراب می‌کرد و گاهی صفحهٔ لاگ‌اوت بالا می‌آمد،
+  // (۲) تزریقِ دستی در ویرایشِ عکس، عکسِ **قبلی** را به‌جای عکسِ جدید می‌گذاشت
+  //     (idها از کلِ کانورسیشن خوانده می‌شدند و به frame درست نگاشت نمی‌شدند).
+  // حالا مثل سابینجا: فقط آدرس‌ها بازنویسی می‌شوند و خودِ ChatGPT عکس را از WS نشان می‌دهد.
+  // ⚠️ پس نمایشِ عکس کاملاً به سالم‌بودنِ WebSocket وابسته است → حالتِ اکانت باید «مستقیم» باشد.
+  // ---- (کدِ قدیمیِ حذف‌شده) ----
+  // (همهٔ توابعِ نگهبانِ عکس حذف شدند: curConv/hasPh/showImages/pollImgReady/noteImgActivity/scanForImage)
+  // تشخیصِ خودکارِ خرابیِ سشن (مودالِ expired) → گزارش به سرور → اگر جایگزینِ سالمی بود، بی‌سروصدا reload روی همان
+  var reconBusy=false;
+  function checkBroken(){ try{
+    if(reconBusy||!document.getElementById('modal-expired-session')) return;
+    if(Date.now()-(+(sessionStorage.getItem('hg_recon')||0))<15000) return; // قفلِ ضدِ حلقه
+    reconBusy=true;
+    fetch(PREFIX+'/__reportbroken',{method:'POST',headers:{'content-type':'application/json'}})
+      .then(function(r){return r.json();})
+      .then(function(j){ reconBusy=false; sessionStorage.setItem('hg_recon',String(Date.now())); if(j&&j.reload) location.reload(); })
+      .catch(function(){ reconBusy=false; });
+  }catch(e){ reconBusy=false; } }
+  setInterval(checkBroken,2000);
+  window.fetch=function(input,init){
+    var ou=(typeof input==='string')?input:((input&&input.url)||'');
+    // Bearer را از درخواست‌های خودِ اپ بقاپ (برای چکِ کانورسیشن؛ بدونِ Bearer=۴۰۴)
+    try{ var hh=(init&&init.headers)||(typeof input!=='string'&&input&&input.headers); if(hh){ var av=hh.get?hh.get('authorization'):(hh.authorization||hh.Authorization); if(av&&/^bearer /i.test(av)) window.__hgB=av; } }catch(e){}
+    var meth=(init&&init.method)||(input&&input.method)||'GET';
+    var self=this;
+    try{ if(typeof input==='string'){input=fix(input);}
+      else if(input&&input.url){ var nu=fix(input.url); if(nu!==input.url) input=new Request(nu,input); } }catch(e){}
+    // پاسخ دست‌نخورده رد می‌شود (هیچ اسکن/دخالتی در استریمِ چت نداریم)
+    function withScan(p){ return p; }
+    // بدنه‌ی استریمی (ReadableStream) را بافر کن — موبایل/سافاری/HTTP1.1 آپلودِ استریمی را رد می‌کنند
+    // ("ReadableStream uploading is not supported")؛ با بافر، به بدنه‌ی معمولی تبدیل و روی همه کار می‌کند.
+    try{
+      // حالت ۱: fetch(url, {body: ReadableStream})
+      if(init&&init.body&&typeof init.body.getReader==='function'){
+        return new Response(init.body).arrayBuffer().then(function(buf){
+          var ni={}; for(var k in init) ni[k]=init[k]; ni.body=buf; try{delete ni.duplex;}catch(e){}
+          return withScan(of.call(self,input,ni));
+        });
+      }
+      // حالت ۲: fetch(Request) که خودِ Request بدنه‌ی استریمی دارد (روشِ ارسالِ ChatGPT)
+      if((!init||init.body==null)&&input&&typeof input!=='string'&&input.method&&input.body&&typeof input.body.getReader==='function'){
+        var req0=input;
+        return req0.clone().arrayBuffer().then(function(buf){
+          var r=new Request(req0.url,{method:req0.method,headers:req0.headers,body:(buf&&buf.byteLength?buf:undefined),mode:req0.mode,credentials:req0.credentials,cache:req0.cache,redirect:req0.redirect,referrer:req0.referrer,integrity:req0.integrity,keepalive:req0.keepalive});
+          return withScan(of.call(self,r));
+        });
+      }
+    }catch(e){}
+    return withScan(of.call(self,input,init)); };
+  var xo=XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open=function(m,u){ arguments[1]=fix(u); return xo.apply(this,arguments); };
+  // دانلود/بازکردنِ فایل با window.open هم از پروکسی رد شود (وگرنه مستقیم به chatgpt.com می‌رود → access denied)
+  var ow=window.open;
+  window.open=function(u){ try{ if(typeof u==='string') arguments[0]=fix(u); }catch(e){} return ow.apply(this,arguments); };
+  // دانلودِ برنامه‌ای (ساختِ <a> و کلیکِ فوری) از observer فرار می‌کند؛ پس درست قبل از کلیک، href را بازنویسی کن.
+  try{ var acl=HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click=function(){ try{ var h=this.getAttribute&&this.getAttribute('href');
+      if(h){ var nh=fix(h); if(nh!==h) this.setAttribute('href',nh); } }catch(e){} return acl.apply(this,arguments); };
+  }catch(e){}
+  // اگر با location به فایل می‌رود، آن را هم بازنویسی کن
+  try{ var la=window.location.assign.bind(window.location);
+    window.location.assign=function(u){ try{ u=fix(String(u)); }catch(e){} return la(u); }; }catch(e){}
+  // WebSocket: حالتِ مستقیم (WS_DIRECT، سبک Subinja) = بدونِ override، مرورگر مستقیم به wss://chatgpt.com
+  // (سریع‌تر، موبایل و عکسِ زنده کار می‌کند؛ ولی IP مشتری به chatgpt.com می‌رسد).
+  // حالتِ مخفی (WS_DIRECT=false) = بازنویسی به سرورِ ما (IP پنهان ولی WS معمولاً وصل نمی‌شود).
+  if(!WS_DIRECT){ var OW=window.WebSocket;
+    if(OW){ window.WebSocket=function(u,p){ try{ if(typeof u==='string'){
+      if(u.indexOf('wss://'+location.host)===0||u.indexOf('ws://'+location.host)===0){}
+      else { var m=u.match(/^wss?:\/\/([^/]+)(\/.*)$/); if(m){
+        // ⭐ هاستِ اصلی را نگه دار و به سرور بگو. ChatGPT از دامنهٔ جدا (ws.chatgpt.com) استفاده می‌کند
+        // و اگر گمش کنیم، سرور به chatgpt.com وصل می‌شود که Cloudflare چالشش می‌دهد.
+        var sep=m[2].indexOf('?')>=0?'&':'?';
+        u=(location.protocol==='https:'?'wss://':'ws://')+location.host+PREFIX+m[2]+sep+'__hgws='+encodeURIComponent(m[1]);
+      } } }
+    }catch(e){} return p?new OW(u,p):new OW(u); }; window.WebSocket.prototype=OW.prototype; } }
+
+  // ---- بازنویسی src/srcset عکس‌های خارجی (پیش‌نمایش عکسِ ساخته‌شده) ----
+  function rwSrcset(v){ try{ return v.split(',').map(function(p){ var t=p.trim().split(/\s+/); t[0]=fix(t[0]); return t.join(' '); }).join(', '); }catch(e){ return v; } }
+  function rwImg(el){ try{
+    if(el.tagName==='IMG'||el.tagName==='SOURCE'){
+      var s=el.getAttribute&&el.getAttribute('src'); if(s){ var n=fix(s); if(n!==s) el.setAttribute('src',n); }
+      var ss=el.getAttribute&&el.getAttribute('srcset'); if(ss){ var m2=rwSrcset(ss); if(m2!==ss) el.setAttribute('srcset',m2); }
+    } }catch(e){} }
+  // فقط لینک‌های مطلقِ chatgpt.com یا رسانه‌ی خارجی را بازنویسی کن (دانلود/پیش‌نمایشِ فایل) — نه لینک‌های داخلیِ نسبی
+  function rwHref(el){ try{ var h=el.getAttribute&&el.getAttribute('href'); if(!h) return;
+    if(h.indexOf(ORIGIN)===0) el.setAttribute('href',PREFIX+h.slice(ORIGIN.length));
+    else if(EXT.test(h)) el.setAttribute('href',ext(h)); }catch(e){} }
+  function scanNode(el){ if(!el||!el.tagName) return; var t=el.tagName;
+    if(t==='IMG'||t==='SOURCE') rwImg(el); else if(t==='A') rwHref(el); }
+  function scanImgs(root){ try{ scanNode(root);
+    if(root.querySelectorAll) root.querySelectorAll('img,source,a[href]').forEach(scanNode); }catch(e){} }
+
+  // ---- اعمال قوانین تغییر متن (تعریف‌شده در پنل ادمین) ----
+  var TEXT_RULES=[];
+  function applyText(){ try{ TEXT_RULES.forEach(function(r){ if(!r||!r.sel) return;
+    document.querySelectorAll(r.sel).forEach(function(el){ if(el.textContent!==r.text) el.textContent=r.text; }); }); }catch(e){} }
+
+  function tick(root){ scanImgs(root||document); applyText(); }
+  var mo=new MutationObserver(function(muts){ for(var i=0;i<muts.length;i++){ var m=muts[i];
+    if(m.type==='attributes'&&m.target) scanNode(m.target);
+    if(m.addedNodes) for(var j=0;j<m.addedNodes.length;j++){ var n=m.addedNodes[j]; if(n.nodeType===1) scanImgs(n); } }
+    applyText(); });
+  function boot(){ tick(document); mo.observe(document.documentElement,{subtree:true,childList:true,attributes:true,attributeFilter:['src','srcset','href']}); }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',boot); else boot();
+})();</script><style id="hg-ui-style">/* ==================================================
+   تنظیمات حساب
+================================================== */
+
+nav a[href*="/settings" i],
+[data-testid*="settings" i],
+[data-testid="settings-menu-item"] {
+    display: none !important;
+}
+
+
+/* ==================================================
+   پلن، قیمت‌گذاری و پرداخت
+================================================== */
+
+a[href*="#pricing" i],
+a[aria-label*="plans" i],
+a[aria-label*="pricing" i],
+[data-testid="modal-account-payment"] {
+    display: none !important;
+}
+
+
+/* ==================================================
+   Library
+================================================== */
+
+a[href*="/library" i],
+[data-testid*="sidebar-item-library" i] {
+    display: none !important;
+}
+
+
+/* ==================================================
+   خروج و منوی حساب
+================================================== */
+
+[data-testid="log-out-menu-item"],
+[data-testid="modal-user-context"] {
+    display: none !important;
+}
+
+
+/* ==================================================
+   Codex و Tasks
+================================================== */
+
+a[href*="/codex" i],
+[data-radix-menu-content] a[href*="/tasks" i] {
+    display: none !important;
+}
+
+
+/* ==================================================
+   Agents
+================================================== */
+
+a[href*="/agents" i],
+[data-testid*="agents" i] {
+    display: none !important;
+}
+
+
+/* ==================================================
+   GPTs
+================================================== */
+
+a[href*="/gpts" i],
+[data-testid*="gpts" i] {
+    display: none !important;
+}
+
+
+/* ==================================================
+   Scheduled
+================================================== */
+
+a[href*="/scheduled" i],
+[data-testid*="scheduled" i] {
+    display: none !important;
+}
+
+
+/* ==================================================
+   دعوت اعضای تیم
+================================================== */
+
+div.px-3\.5.pt-1.pb-3:has(> button) {
+    display: none !important;
+}
+
+
+/* ==================================================
+   Add from library
+================================================== */
+
+div[tabindex="0"].__menu-item:has(use[href$="#library"]) {
+    display: none !important;
+    pointer-events: none !important;
+}
+
+
+/* ==================================================
+   منوی دانلود نسخه موبایل و دسکتاپ
+================================================== */
+
+button[aria-label="Download apps"] {
+    display: none !important;
+    pointer-events: none !important;
+}
+
+
+/* ==================================================
+   تغییر نام بالای پروفایل به Gpt
+================================================== */
+
+[data-testid="accounts-profile-button"]
+> div.flex.min-w-0.items-center.gap-2
+> div.min-w-0
+> div:first-child
+> .truncate {
+    position: relative;
+    font-size: 0 !important;
+}
+
+[data-testid="accounts-profile-button"]
+> div.flex.min-w-0.items-center.gap-2
+> div.min-w-0
+> div:first-child
+> .truncate::after {
+    content: "Gpt";
+    color: inherit;
+    font-size: 14px;
+    font-weight: 500;
+}
+
+
+/* ==================================================
+   تغییر نوشته پایین پروفایل به Plus
+================================================== */
+
+[data-testid="accounts-profile-button"]
+> div.flex.min-w-0.items-center.gap-2
+> div.min-w-0
+> div:nth-child(2)
+> .truncate {
+    position: relative;
+    font-size: 0 !important;
+}
+
+[data-testid="accounts-profile-button"]
+> div.flex.min-w-0.items-center.gap-2
+> div.min-w-0
+> div:nth-child(2)
+> .truncate::after {
+    content: "Plus";
+    color: inherit;
+    font-size: 12px;
+    font-weight: 400;
+}
+
+
+/* ==================================================
+   غیرفعال‌کردن دکمه پروفایل
+================================================== */
+
+[data-testid="accounts-profile-button"] {
+    pointer-events: none !important;
+    cursor: default !important;
+}
+
+
+/* ==================================================
+   حفظ ظاهر اسلایدر Power
+================================================== */
+
+[data-model-reasoning-effort-slider] {
+    position: relative !important;
+}
+
+
+/* ==================================================
+   مسدودکردن محدوده Extra High و Pro در اسلایدر
+================================================== */
+
+[data-model-reasoning-effort-slider]::after {
+    content: "";
+    position: absolute;
+    z-index: 50;
+    top: 0;
+    right: 0;
+    width: 37.5%;
+    height: 100%;
+    pointer-events: auto;
+    cursor: not-allowed;
+    background: transparent;
+}
+
+
+/* ==================================================
+   حذف Extra High و Pro از Advanced → Effort
+   Instant، Medium و High باقی می‌مانند
+================================================== */
+
+[data-radix-menu-content][data-side="right"]
+> [role="group"]:has(> [role="menuitemradio"]:nth-child(5):last-child)
+> [role="menuitemradio"]:nth-child(n+4) {
+    display: none !important;
+    pointer-events: none !important;
+}
+</style><style>
+#hg-fab{position:fixed;z-index:2147483000;right:16px;left:auto;bottom:150px;font-family:Tahoma,system-ui,sans-serif;opacity:.5;transition:opacity .2s;touch-action:none}
+#hg-fab:hover,#hg-fab.open,#hg-fab.dragging{opacity:1}
+@media (max-width:640px){#hg-fab{bottom:170px}}
+#hg-fab .hg-btn{width:46px;height:46px;border-radius:50%;border:0;cursor:grab;background:#1f2430;color:#e8eaf2;font-size:20px;box-shadow:0 6px 18px rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;touch-action:none;user-select:none}
+#hg-fab.dragging .hg-btn{cursor:grabbing}
+#hg-fab .hg-menu{position:absolute;bottom:56px;right:0;left:auto;background:#171a2b;color:#e8eaf2;border:1px solid #2b3050;border-radius:14px;padding:10px;min-width:210px;box-shadow:0 16px 40px rgba(0,0,0,.5);display:none}
+#hg-fab.open .hg-menu{display:block}
+#hg-fab .hg-h{font-size:12px;color:#9aa0b5;padding:4px 8px 8px;border-bottom:1px solid #2b3050;margin-bottom:8px;direction:rtl;text-align:right}
+#hg-fab .hg-h b{color:#e8eaf2}
+#hg-fab .hg-logout{width:100%;padding:10px;border:0;border-radius:10px;background:rgba(255,92,108,.14);color:#ff8a95;font-weight:700;cursor:pointer;font-size:13px;font-family:inherit}
+#hg-fab .hg-logout:hover{background:rgba(255,92,108,.22)}
+</style>
+<script>(function(){
+  var NAME="Chatgpt Pl 4";
+  function build(){
+    var f=document.createElement('div'); f.id='hg-fab'; f.dir='rtl';
+    f.innerHTML='<div class="hg-menu"><div class="hg-h">اکانت: <b>'+NAME+'</b></div>'+
+      '<button class="hg-logout">🚪 خروج از اکانت</button></div>'+
+      '<button class="hg-btn" title="بکش برای جابه‌جایی · بزن برای منو">☰</button>';
+    // بازیابیِ موقعیتِ ذخیره‌شده
+    try{ var pos=JSON.parse(localStorage.getItem('hg_fab_pos')||'null');
+      if(pos&&pos.left!=null){ f.style.left=pos.left+'px'; f.style.top=pos.top+'px'; f.style.right='auto'; f.style.bottom='auto'; } }catch(e){}
+    var btn=f.querySelector('.hg-btn');
+    var drag=false, moved=false, sx=0, sy=0, ox=0, oy=0;
+    btn.addEventListener('pointerdown',function(e){ drag=true; moved=false; sx=e.clientX; sy=e.clientY;
+      var r=f.getBoundingClientRect(); ox=r.left; oy=r.top; f.classList.add('dragging');
+      try{ btn.setPointerCapture(e.pointerId); }catch(_){} e.preventDefault(); });
+    btn.addEventListener('pointermove',function(e){ if(!drag) return;
+      var dx=e.clientX-sx, dy=e.clientY-sy; if(Math.abs(dx)+Math.abs(dy)>5) moved=true;
+      var nl=Math.max(4,Math.min(window.innerWidth-52,ox+dx)), nt=Math.max(4,Math.min(window.innerHeight-52,oy+dy));
+      f.style.left=nl+'px'; f.style.top=nt+'px'; f.style.right='auto'; f.style.bottom='auto'; });
+    btn.addEventListener('pointerup',function(e){ if(!drag) return; drag=false; f.classList.remove('dragging');
+      if(moved){ try{ var r=f.getBoundingClientRect(); localStorage.setItem('hg_fab_pos',JSON.stringify({left:Math.round(r.left),top:Math.round(r.top)})); }catch(_){} }
+      else { f.classList.toggle('open'); } });
+    f.querySelector('.hg-logout').addEventListener('click',function(){
+      if(confirm('از حساب خارج می‌شوید؟ پس از خروج، این دستگاه آزاد می‌شود و می‌توانید از دستگاه دیگری وارد شوید.')) location.href='/logout';
+    });
+    document.addEventListener('click',function(e){ if(!f.contains(e.target)) f.classList.remove('open'); });
+    return f;
+  }
+  function ensure(){ if(!document.getElementById('hg-fab')&&document.body){ document.body.appendChild(build()); } }
+  function start(){ ensure();
+    try{ new MutationObserver(ensure).observe(document.documentElement,{childList:true,subtree:true}); }catch(e){}
+    setInterval(ensure,1500);
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',start); else start();
+})();</script>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>تقویم محتوایی اینستاگرام | مهدیاران</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700;800&display=swap');
+:root{
+  --dark:#2c3531;
+  --teal:#116466;
+  --sand:#d9b08c;
+  --peach:#ffcb9a;
+  --mint:#d1e8e2;
+  --bg:#eef4f1;
+  --ink:#26302d;
+  --muted:#66736f;
+  --white:#fff;
+  --border:rgba(44,53,49,.18);
+  --shadow:0 12px 30px rgba(44,53,49,.10);
+}
+*{box-sizing:border-box}
+html,body{max-width:100%;overflow-x:hidden}
+body{margin:0;background:#116466;color:var(--ink);font-family:Vazirmatn,Tahoma,sans-serif}
+button,input,textarea,select{font:inherit}
+button{color:inherit}
+.wrap{width:100%;max-width:1900px;margin:auto;padding:24px clamp(12px,1.7vw,30px) 36px}
+.hero{display:flex;justify-content:space-between;align-items:flex-end;gap:18px;margin-bottom:18px}
+.hero-copy{min-width:240px}
+h1{margin:5px 0 3px;font-size:clamp(26px,2.2vw,38px);letter-spacing:-1px;color:#fff}
+.sub{margin:0;color:var(--mint);font-size:12px}
+.actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-start}
+.btn{border:1px solid var(--border);background:rgba(255,255,255,.82);border-radius:11px;padding:9px 13px;cursor:pointer;font-weight:700;color:var(--dark);transition:.18s ease;white-space:nowrap}
+.btn:hover{transform:translateY(-1px);border-color:var(--teal);box-shadow:0 6px 15px rgba(17,100,102,.10)}
+.btn.primary{background:var(--dark);color:#fff;border-color:var(--dark)}
+.btn.soft{background:var(--mint);border-color:rgba(17,100,102,.20)}
+.btn.danger{background:rgba(255,255,255,.55);border-color:rgba(104,49,45,.22);color:#713f3b}
+.btn.danger:hover{background:#f4d8d3;border-color:#a55c55}
+.toolbar{position:relative;background:rgba(209,232,226,.94);border:1px solid var(--border);border-radius:16px;padding:11px;display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin-bottom:13px;box-shadow:0 7px 22px rgba(44,53,49,.06);backdrop-filter:blur(7px)}
+.search-wrap{position:relative;flex:1 1 280px;max-width:520px;min-width:230px}
+.search-icon{position:absolute;right:12px;top:50%;transform:translateY(-50%);width:18px;height:18px;color:var(--teal);pointer-events:none}
+.search{width:100%;height:42px;padding:8px 42px 8px 38px;background:#fff;border:1px solid rgba(44,53,49,.18);border-radius:10px;outline:none;color:var(--ink)}
+.search:focus{border-color:var(--teal);box-shadow:0 0 0 3px rgba(17,100,102,.10)}
+.search-clear{position:absolute;left:8px;top:50%;transform:translateY(-50%);width:26px;height:26px;border:0;background:transparent;border-radius:50%;display:none;place-items:center;cursor:pointer;color:var(--muted);font-size:20px;line-height:1;padding:0;z-index:2}
+.search-clear.show{display:grid}.search-clear:hover{background:rgba(17,100,102,.10);color:var(--dark)}
+.people-toggle{height:42px;display:flex;align-items:center;gap:7px}
+.people-toggle.active{background:var(--teal);color:white;border-color:var(--teal)}
+.people-panel{width:100%;display:none;gap:7px;flex-wrap:wrap;padding-top:3px}
+.people-panel.open{display:flex}
+.filter-chip{border:1px solid rgba(17,100,102,.25);background:var(--mint);padding:7px 11px;border-radius:999px;cursor:pointer;font-weight:700;font-size:11px}
+.filter-chip.active{background:var(--teal);color:#fff;border-color:var(--teal)}
+.filter-chip .clear-filter{border:0;background:rgba(255,255,255,.18);color:#fff;width:18px;height:18px;border-radius:50%;margin-right:5px;cursor:pointer;display:inline-grid;place-items:center;font-weight:900;line-height:1;padding:0}
+.empty-hint{font-size:10px;color:var(--muted);padding:4px 2px}
+.calendar{width:100%;overflow-x:hidden;padding-bottom:6px}
+.grid,.content-card{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1.24fr) repeat(4,minmax(0,1fr)) minmax(0,1.28fr) minmax(0,1fr);gap:7px;width:100%;min-width:0}
+.grid{margin-bottom:7px}
+.head{background:var(--dark);color:#fff;border-radius:11px;padding:11px 7px;font-size:clamp(10px,.85vw,13px);font-weight:800;text-align:center;display:flex;align-items:center;justify-content:center;min-width:0}
+.content-card{background:rgba(44,53,49,.24);border:1px solid rgba(209,232,226,.24);border-radius:15px;padding:7px;box-shadow:var(--shadow);margin-bottom:9px;align-items:stretch;min-width:0}
+.cell{background:var(--mint);border:1px solid rgba(44,53,49,.18);border-radius:12px;padding:8px;min-height:100%;min-width:0;display:flex;flex-direction:column;gap:6px;transition:opacity .2s,filter .2s,background .2s,transform .2s}
+.cell.filtered-out{visibility:hidden;pointer-events:none}
+.cell.done{background:rgba(44,53,49,.52);border-color:rgba(44,53,49,.45)}
+.cell.done>:not(.done-toggle){opacity:.30;filter:saturate(.25)}
+.cell.done .done-toggle{opacity:1;filter:none;background:#ffcb9a;color:var(--dark);border-color:rgba(44,53,49,.28)}
+.cell.done input:not([data-done-i]),.cell.done textarea,.cell.done select,.cell.done button:not(.done-control){cursor:not-allowed}
+.cell.done .done-toggle input{cursor:pointer}
+
+.title-tag{font-size:10px;color:var(--teal);font-weight:800;letter-spacing:.4px}
+.label{font-size:9.5px;color:#53615c;font-weight:700;line-height:1.2}
+.field-block{display:flex;flex-direction:column;gap:4px;min-width:0}
+.edit,textarea.edit{width:100%;min-width:0;border:1px solid rgba(44,53,49,.18);background:rgba(255,255,255,.86);border-radius:8px;padding:7px 7px;outline:none;color:var(--ink);font-size:11px}
+.edit:focus,textarea.edit:focus{border-color:var(--teal);box-shadow:0 0 0 2px rgba(17,100,102,.10)}
+textarea.edit{min-height:62px;resize:vertical;line-height:1.65}
+.date-control,.time-control{display:grid;align-items:center;gap:2px;direction:ltr;width:100%;min-width:0;background:rgba(255,255,255,.86);border:1px solid rgba(44,53,49,.18);border-radius:8px;padding:3px 4px;height:34px}
+.date-control{grid-template-columns:minmax(0,1.45fr) 6px minmax(0,.8fr) 6px minmax(0,.8fr) 24px}
+.time-control{grid-template-columns:minmax(0,1fr) 7px minmax(0,1fr)}
+.date-part,.time-part{width:100%;min-width:0;border:0;background:transparent;outline:none;text-align:center;padding:2px 0;font-size:10.5px;color:var(--ink);direction:ltr}
+.date-sep,.time-sep{font-weight:800;color:var(--dark);text-align:center;font-size:11px;user-select:none}
+.calendar-btn{border:0;background:transparent;padding:2px;cursor:pointer;color:var(--teal);display:grid;place-items:center}
+.calendar-btn svg{width:17px;height:17px}
+.owner-control{position:relative;display:grid;grid-template-columns:minmax(0,1fr) 30px;gap:4px;align-items:stretch;min-width:0}
+.owner-input{width:100%;min-width:0;border:1px solid rgba(44,53,49,.18);background:rgba(255,255,255,.86);border-radius:8px;padding:7px;outline:none;color:var(--ink);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.owner-input::placeholder{color:rgba(83,97,92,.58);opacity:1}
+.owner-input.assigned-display{color:rgba(83,97,92,.58);opacity:1}
+.owner-input:focus{border-color:var(--teal);box-shadow:0 0 0 2px rgba(17,100,102,.10)}
+.owner-picker-btn{border:1px solid rgba(44,53,49,.18);background:var(--peach);border-radius:8px;display:grid;place-items:center;cursor:pointer;color:var(--dark);padding:0}
+.owner-picker-btn svg{width:17px;height:17px}
+.owner-menu{position:absolute;z-index:150;top:calc(100% + 4px);right:0;left:0;background:#fff;border:1px solid rgba(44,53,49,.20);border-radius:10px;box-shadow:0 14px 34px rgba(44,53,49,.22);padding:5px;display:none;max-height:190px;overflow:auto}
+.owner-menu.open{display:block}
+.owner-option{width:100%;border:0;background:transparent;border-radius:7px;padding:7px 8px;text-align:right;cursor:pointer;font-size:10px;color:var(--dark)}
+.owner-option:hover,.owner-option.active{background:var(--mint)}
+.owner-empty{font-size:9.5px;color:var(--muted);padding:7px}
+.owner-assigned{grid-column:1/-1;display:flex;gap:3px;flex-wrap:wrap;min-height:0;margin-top:1px}
+.person-tag{display:inline-flex;align-items:center;gap:3px;background:var(--teal);color:#fff;border-radius:999px;padding:3px 6px;font-size:9px;font-weight:700;max-width:100%}
+.person-tag span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.person-tag button{border:0;background:transparent;color:#fff;padding:0;cursor:pointer;font-size:13px;line-height:1}
+.project-people{display:flex;flex-direction:column;gap:4px;border-top:1px dashed rgba(44,53,49,.18);padding-top:6px}
+.project-people .tag-chips{display:flex;gap:3px;flex-wrap:wrap}
+.project-people .person-tag{padding:3px 7px}
+.check{display:flex;flex-direction:column;gap:5px}.check label{font-size:10px;background:rgba(255,255,255,.72);border:1px solid rgba(44,53,49,.15);border-radius:8px;padding:6px;display:flex;gap:5px;align-items:center;cursor:pointer}
+.check input,.done-toggle input{width:15px;height:15px;accent-color:var(--teal);cursor:pointer;margin:0;flex:0 0 auto}
+.done-toggle{margin-top:auto;font-size:10px;background:#d9b08c;border:1px solid rgba(44,53,49,.22);border-radius:8px;padding:7px;display:flex;gap:6px;align-items:center;cursor:pointer;font-weight:800;transition:.18s}
+.btn.danger.delete-content{margin-top:auto;width:100%;font-size:10px;padding:9px 8px;background:#2c3531;border:1px solid #2c3531;color:#fff;box-shadow:0 5px 14px rgba(44,53,49,.16)}
+.btn.danger.delete-content:hover{background:#d02d2d;border-color:#d02d2d;color:#fff;box-shadow:0 7px 18px rgba(208,45,45,.28)}
+.add{margin-top:8px;width:100%;border:2px dashed rgba(17,100,102,.35);background:rgba(209,232,226,.35);border-radius:14px;padding:13px;cursor:pointer;font-weight:800;color:var(--teal)}
+.add:hover{border-color:var(--teal);background:rgba(209,232,226,.7)}
+.no-results{display:none;text-align:center;padding:30px 15px;background:rgba(255,255,255,.75);border:1px dashed rgba(44,53,49,.20);border-radius:14px;color:var(--muted);font-size:12px}
+.no-results.show{display:block}
+.modal-backdrop{position:fixed;inset:0;background:rgba(44,53,49,.55);display:none;align-items:center;justify-content:center;padding:18px;z-index:1000;backdrop-filter:blur(3px)}
+.modal-backdrop.open{display:flex}
+.modal{width:min(520px,96vw);max-height:84vh;overflow:auto;background:#f9fbfa;border-radius:18px;border:1px solid rgba(255,255,255,.55);box-shadow:0 28px 80px rgba(0,0,0,.26);padding:17px}
+body.modal-open{overflow:hidden}
+.tag-manager-modal{display:flex;flex-direction:column;overflow:hidden}
+.tag-manager-modal .tag-manage-list{overflow-y:auto;overscroll-behavior:contain;min-height:0;max-height:52vh;padding-inline-end:3px}
+.tag-manager-modal .tag-add-row,.tag-manager-modal .modal-actions,.tag-manager-modal h2,.tag-manager-modal p{flex:0 0 auto}
+.modal h2{font-size:18px;margin:0 0 7px;color:var(--dark)}
+.modal p{font-size:12px;color:var(--muted);line-height:1.9;margin:0 0 13px}
+.modal-actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:13px}
+.tag-add-row,.tag-manage-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px;align-items:center}
+.tag-add-row{margin:10px 0 14px}
+.tag-manage-list{display:flex;flex-direction:column;gap:7px}
+.tag-manage-row{background:var(--mint);border:1px solid rgba(17,100,102,.18);border-radius:10px;padding:7px}
+.tag-manage-row input{width:100%;border:1px solid rgba(44,53,49,.18);background:white;border-radius:8px;padding:7px;outline:none}
+.row-actions{display:flex;gap:5px}
+.row-actions .btn{padding:6px 8px;font-size:10px}
+.calendar-popup{position:fixed;z-index:1200;width:288px;background:#fff;border:1px solid rgba(44,53,49,.20);border-radius:14px;box-shadow:0 20px 60px rgba(44,53,49,.24);padding:10px;display:none;direction:rtl}
+.calendar-popup.open{display:block}
+.cal-head{display:grid;grid-template-columns:32px 1fr 32px;align-items:center;gap:5px;margin-bottom:7px}
+.cal-head button{border:0;background:var(--mint);border-radius:8px;height:30px;cursor:pointer;font-weight:800}
+.cal-title{text-align:center;font-weight:800;color:var(--dark);font-size:12px}
+.cal-week,.cal-days{display:grid;grid-template-columns:repeat(7,1fr);gap:3px}
+.cal-week div{text-align:center;font-size:9px;color:var(--muted);padding:4px 0;font-weight:700}
+.cal-day{border:0;background:#f3f6f5;border-radius:7px;aspect-ratio:1;cursor:pointer;font-size:10px;display:grid;place-items:center}
+.cal-day:hover{background:var(--mint)}
+.cal-day.today{outline:2px solid var(--teal);font-weight:800}
+.cal-day.selected{background:var(--teal);color:white;font-weight:800}
+.cal-day.empty{visibility:hidden}
+.cal-footer{display:flex;justify-content:center;margin-top:7px}
+.cal-footer button{border:0;background:var(--peach);border-radius:8px;padding:6px 10px;cursor:pointer;font-size:10px;font-weight:800}
+.toast{position:fixed;left:18px;bottom:18px;background:var(--dark);color:#fff;border-radius:10px;padding:9px 12px;font-size:11px;box-shadow:0 12px 30px rgba(0,0,0,.20);opacity:0;transform:translateY(8px);pointer-events:none;transition:.2s;z-index:1400}
+.toast.show{opacity:1;transform:none}
+@media(max-width:1250px){
+  .wrap{padding-left:10px;padding-right:10px}.grid,.content-card{gap:5px}.content-card{padding:5px}.cell{padding:6px;gap:5px}.edit,textarea.edit,.owner-input{font-size:10px;padding:6px 5px}.label{font-size:8.8px}.date-part,.time-part{font-size:9.5px}.person-tag{font-size:8px;padding:3px 5px}.check label,.done-toggle{font-size:9px;padding:6px}.btn{padding:8px 10px;font-size:11px}
+}
+@media(max-width:980px){
+  .hero{align-items:flex-start;flex-direction:column}.actions{width:100%}.grid{display:none}.content-card{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:8px}.cell{min-height:0}.cell.filtered-out{display:none}.toolbar{align-items:stretch}.search-wrap{max-width:none}.people-toggle{flex:1}.wrap{padding:14px 10px 28px}
+}
+@media(max-width:620px){.content-card{grid-template-columns:1fr}.actions .btn{flex:1}.calendar-popup{width:min(288px,calc(100vw - 20px))}}
+@media print{body{background:#fff}.toolbar,.actions,.add,.delete-content,.owner-picker-btn,.owner-menu,.person-tag button,.calendar-popup,.modal-backdrop,.toast{display:none!important}.grid{display:grid}.content-card{box-shadow:none;break-inside:avoid}.wrap{padding:0}.cell.filtered-out{visibility:visible}}
+
+/* ==================================================
+   Online mode: Supabase Auth + Admin / Viewer
+================================================== */
+.auth-screen{position:fixed;inset:0;z-index:5000;background:#116466;display:flex;align-items:center;justify-content:center;padding:20px}
+.auth-screen.hidden{display:none}
+.auth-card{width:min(430px,96vw);background:#f9fbfa;border:1px solid rgba(255,255,255,.45);border-radius:20px;box-shadow:0 28px 80px rgba(0,0,0,.28);padding:24px;direction:rtl}
+.auth-card h2{margin:0 0 7px;color:var(--dark);font-size:23px}
+.auth-card p{margin:0 0 18px;color:var(--muted);font-size:12px;line-height:1.9}
+.auth-field{display:flex;flex-direction:column;gap:5px;margin-bottom:11px}
+.auth-field label{font-size:11px;font-weight:800;color:var(--dark)}
+.auth-field input{width:100%;height:44px;border:1px solid rgba(44,53,49,.20);border-radius:10px;background:#fff;padding:8px 11px;outline:none;direction:ltr;text-align:left}
+.auth-field input:focus{border-color:var(--teal);box-shadow:0 0 0 3px rgba(17,100,102,.10)}
+.auth-submit{width:100%;height:44px;margin-top:4px}
+.auth-error{min-height:22px;margin-top:10px!important;margin-bottom:0!important;color:#a12828!important;font-size:11px!important}
+.account-bar{position:fixed;z-index:900;left:14px;top:12px;display:none;align-items:center;gap:7px;background:rgba(249,251,250,.96);border:1px solid rgba(44,53,49,.18);border-radius:12px;padding:7px 8px;box-shadow:0 8px 24px rgba(44,53,49,.12);backdrop-filter:blur(6px);direction:rtl}
+.account-bar.show{display:flex}
+.account-email{max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;color:var(--muted);direction:ltr}
+.role-badge{border-radius:999px;padding:4px 8px;font-size:9px;font-weight:900;background:var(--dark);color:#fff}
+.role-badge.viewer{background:var(--sand);color:var(--dark)}
+.sync-state{font-size:9px;color:var(--muted);white-space:nowrap}
+.sync-state.ok{color:#116466}.sync-state.err{color:#b32727}
+.logout-btn{border:1px solid rgba(44,53,49,.18);background:#fff;border-radius:8px;padding:5px 8px;cursor:pointer;font-size:9px;font-weight:800}
+body.viewer .actions{display:none!important}
+body.viewer .add,body.viewer .delete-content,body.viewer .owner-picker-btn{display:none!important}
+body.viewer .content-card input:disabled,body.viewer .content-card textarea:disabled,body.viewer .content-card select:disabled{opacity:1;color:var(--ink);-webkit-text-fill-color:var(--ink)}
+body.viewer .done-toggle input:disabled{cursor:default}
+body.viewer .done-toggle{cursor:default}
+@media(max-width:700px){.account-bar{position:static;margin:10px 10px 0;justify-content:space-between}.account-email{max-width:120px}.wrap{padding-top:12px}}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+<div id="authScreen" class="auth-screen">
+  <form id="loginForm" class="auth-card" autocomplete="on">
+    <h2>ورود به تقویم محتوایی</h2>
+    <p>برای مشاهده تقویم، با حسابی که مدیر برای شما ساخته وارد شوید.</p>
+    <div class="auth-field"><label for="loginEmail">ایمیل</label><input id="loginEmail" type="email" autocomplete="username" required></div>
+    <div class="auth-field"><label for="loginPassword">رمز عبور</label><input id="loginPassword" type="password" autocomplete="current-password" required></div>
+    <button id="loginButton" class="btn primary auth-submit" type="submit">ورود</button>
+    <p id="loginError" class="auth-error"></p>
+  </form>
+</div>
+
+<div id="accountBar" class="account-bar">
+  <span id="roleBadge" class="role-badge">—</span>
+  <span id="accountEmail" class="account-email"></span>
+  <span id="syncState" class="sync-state">در حال اتصال…</span>
+  <button class="logout-btn" type="button" onclick="logoutOnline()">خروج</button>
+</div>
+
+<div class="wrap">
+  <section class="hero">
+    <div class="hero-copy"><h1>تقویم محتوایی اینستاگرام</h1><p class="sub">داشبورد مدیریت رسانه مهدیاران</p></div>
+    <div class="actions">
+      <button class="btn" type="button" onclick="addRow()">＋ افزودن پروژه جدید</button>
+      <button class="btn soft" type="button" onclick="openTagManager()">مدیریت تگ‌ها</button>
+      <button class="btn primary" type="button" onclick="downloadHTML()">ذخیره فایل</button>
+    </div>
+  </section>
+
+  <div class="toolbar">
+    <div class="search-wrap">
+      <svg class="search-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/><path d="m20 20-4.1-4.1" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <input id="search" class="search" placeholder="جستجو" oninput="filterRows()" autocomplete="off">
+      <button id="searchClear" class="search-clear" type="button" aria-label="پاک کردن جستجو" onclick="clearSearch()">×</button>
+    </div>
+    <button id="peopleToggle" class="btn people-toggle" type="button" onclick="togglePeoplePanel()">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="9" cy="7" r="4" stroke="currentColor" stroke-width="2"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      مشاهده وظایف فردی
+    </button>
+    <div id="peoplePanel" class="people-panel"></div>
+  </div>
+
+  <div class="calendar">
+    <div class="grid" id="headers">
+      <div class="head">پروژه</div><div class="head">آماده‌سازی محتوا</div><div class="head">تایم‌بندی</div><div class="head">آماده‌سازی صوت</div>
+      <div class="head">تدوین</div><div class="head">طراحی کاور</div><div class="head">انتشار</div><div class="head">تبلیغ</div>
+    </div>
+    <div id="rows"></div>
+    <div id="noResults" class="no-results">موردی مطابق جستجو یا فیلتر انتخاب‌شده پیدا نشد.</div>
+  </div>
+  <button class="add" type="button" onclick="addRow()">＋ افزودن پروژه جدید</button>
+</div>
+
+<div id="tagModal" class="modal-backdrop" role="dialog" aria-modal="true" onclick="backdropClose(event,'tagModal')">
+  <div class="modal tag-manager-modal" onclick="event.stopPropagation()">
+    <h2>مدیریت تگ‌ها</h2>
+    <p>نام نیروها را اینجا اضافه، ویرایش یا حذف کنید. سپس در هر بخش، تگ نیرو را به وظیفه مربوط اختصاص دهید.</p>
+    <div class="tag-add-row">
+      <input id="newTagName" type="text" placeholder="نام نیروی جدید" onkeydown="if(event.key==='Enter')addTag()">
+      <button class="btn primary" type="button" onclick="addTag()">افزودن تگ</button>
+    </div>
+    <div id="tagManageList" class="tag-manage-list"></div>
+    <div class="modal-actions"><button class="btn" type="button" onclick="closeModal('tagModal')">بستن</button></div>
+  </div>
+</div>
+
+<div id="confirmModal" class="modal-backdrop" role="dialog" aria-modal="true" onclick="backdropClose(event,'confirmModal')">
+  <div class="modal" onclick="event.stopPropagation()">
+    <h2 id="confirmTitle">حذف پروژه</h2>
+    <p id="confirmText"></p>
+    <div class="modal-actions">
+      <button class="btn danger" type="button" onclick="confirmDelete()">بله</button>
+      <button class="btn" type="button" onclick="cancelDelete()">خیر</button>
+    </div>
+  </div>
+</div>
+
+<div id="successModal" class="modal-backdrop" role="dialog" aria-modal="true">
+  <div class="modal" onclick="event.stopPropagation()">
+    <h2>حذف پروژه</h2>
+    <p id="successText"></p>
+  </div>
+</div>
+
+<div id="calendarPopup" class="calendar-popup" aria-label="تقویم شمسی"></div>
+<div id="toast" class="toast"></div>
+
+<script>
+const SUPABASE_URL='https://isehvfnnkuayyomgyjpr.supabase.co';
+const SUPABASE_PUBLISHABLE_KEY='sb_publishable_vzpDIQs8IGMn9YK5VMx2Bw_8axdMq8o';
+const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});
+let currentUser=null;
+let currentRole='viewer';
+let isAdmin=false;
+let realtimeChannel=null;
+let saveTimer=null;
+let saveInFlight=false;
+let saveAgain=false;
+let onlineReady=false;
+let pollTimer=null;
+let pollBusy=false;
+let lastServerUpdatedAt='';
+
+const KEY='content_calendar_v5';
+const LEGACY_KEYS=['content_calendar_v4','content_calendar_v3'];
+const SECTION_KEYS=['content','prep','time','audio','edit','cover','publish','ads'];
+const SECTION_LABELS={content:'پروژه',prep:'آماده‌سازی محتوا',time:'تایم‌بندی',audio:'آماده‌سازی صوت',edit:'تدوین',cover:'طراحی کاور',publish:'انتشار',ads:'تبلیغ'};
+const OWNER_KEYS={prep:'prepOwner',time:'timeOwner',audio:'audioOwner',edit:'editOwner',cover:'coverOwner',publish:'publishOwner',ads:'adsOwner'};
+let data=[];
+let tags=[];
+let activePersonTag='';
+let pendingDeleteIndex=null;
+let pendingDeleteTitle='';
+let pendingDeleteReason='manual';
+let successModalTimer=null;
+let calendarTarget=null;
+let calView={jy:1405,jm:1};
+
+function blank(){return {
+  topic:'',
+  prepReceived:'',prepOwner:'',prepDue:'',
+  timeReceived:'',timeOwner:'',timeDue:'',
+  audioReceived:'',audioOwner:'',audioDue:'',
+  editReceived:'',editOwner:'',editDue:'',
+  coverReceived:'',coverOwner:'',coverDue:'',
+  adminDate:'',publishOwner:'',caption:'',publishDate:'',publishTime:'',adsOwner:'',
+  pin:false,story:false,collab:false,repost:false,
+  sectionTags:{content:[],prep:[],time:[],audio:[],edit:[],cover:[],publish:[],ads:[]},
+  done:{content:false,prep:false,time:false,audio:false,edit:false,cover:false,publish:false,ads:false}
+}}
+function normalizeRow(row){
+  const base=blank();
+  const out=Object.assign(base,row||{});
+  out.sectionTags=Object.assign({},base.sectionTags,(row&&row.sectionTags)||{});
+  out.done=Object.assign({},base.done,(row&&row.done)||{});
+  SECTION_KEYS.forEach(s=>{if(!Array.isArray(out.sectionTags[s]))out.sectionTags[s]=[];out.done[s]=!!out.done[s]});
+  out.sectionTags.content=[];out.done.content=false;
+  return out;
+}
+function loadState(){
+  let state=null;
+  try{state=JSON.parse(localStorage.getItem(KEY)||'null')}catch(e){}
+  if(state&&Array.isArray(state.data)){data=state.data.map(normalizeRow);tags=Array.isArray(state.tags)?state.tags:[];return}
+  let embedded=null;
+  const embeddedEl=document.getElementById('embedded-calendar-data');
+  if(embeddedEl){try{embedded=JSON.parse(embeddedEl.textContent||'null')}catch(e){}}
+  if(embedded&&Array.isArray(embedded.data)){data=embedded.data.map(normalizeRow);tags=Array.isArray(embedded.tags)?embedded.tags:[];return}
+  for(const key of LEGACY_KEYS){
+    let legacy=null;try{legacy=JSON.parse(localStorage.getItem(key)||'null')}catch(e){}
+    if(legacy&&Array.isArray(legacy.data)){data=legacy.data.map(normalizeRow);tags=Array.isArray(legacy.tags)?legacy.tags:[];return}
+    if(Array.isArray(legacy)&&legacy.length){data=legacy.map(normalizeRow);tags=[];return}
+  }
+  data=[blank()];tags=[];
+}
+function setSyncState(text,state=''){
+  const el=document.getElementById('syncState');if(!el)return;
+  el.textContent=text;el.classList.remove('ok','err');if(state)el.classList.add(state);
+}
+function save(){
+  try{localStorage.setItem(KEY,JSON.stringify({data,tags}))}catch(e){}
+  if(!onlineReady||!currentUser||!isAdmin)return;
+  setSyncState('در حال ذخیره…');
+  clearTimeout(saveTimer);
+  saveTimer=setTimeout(()=>{saveTimer=null;pushCalendarState()},450);
+}
+async function pushCalendarState(){
+  if(!onlineReady||!currentUser||!isAdmin)return;
+  if(saveInFlight){saveAgain=true;return}
+  saveInFlight=true;saveAgain=false;
+  const snapshot={data,tags};
+  const {data:updatedRow,error}=await sb.from('calendar_state').update({
+    payload:snapshot,
+    updated_at:new Date().toISOString(),
+    updated_by:currentUser.id
+  }).eq('id',1).select('updated_at').single();
+  saveInFlight=false;
+  if(error){console.error(error);setSyncState('خطا در ذخیره','err');toast('ذخیره آنلاین انجام نشد');}
+  else {lastServerUpdatedAt=updatedRow?.updated_at||lastServerUpdatedAt;setSyncState('ذخیره شد','ok');}
+  if(saveAgain){saveAgain=false;pushCalendarState()}
+}
+function esc(s){return String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;')}
+function toFa(n){return String(n).replace(/\d/g,d=>'۰۱۲۳۴۵۶۷۸۹'[d])}
+function faToEn(s){return String(s??'').replace(/[۰-۹]/g,d=>'۰۱۲۳۴۵۶۷۸۹'.indexOf(d)).replace(/[٠-٩]/g,d=>'٠١٢٣٤٥٦٧٨٩'.indexOf(d))}
+function normalizeSearch(s){return faToEn(String(s??'')).toLowerCase().replace(/ي/g,'ی').replace(/ك/g,'ک').replace(/[ًٌٍَُِّْ]/g,'').replace(/\s+/g,' ').trim()}
+function text(i,k,ph){return '<input class="edit" data-i="'+i+'" data-k="'+k+'" placeholder="'+esc(ph)+'" value="'+esc(data[i][k])+'" autocomplete="off">'}
+function area(i,k,ph){return '<textarea class="edit" data-i="'+i+'" data-k="'+k+'" placeholder="'+esc(ph)+'">'+esc(data[i][k])+'</textarea>'}
+function field(label,html){return '<div class="field-block"><div class="label">'+label+'</div>'+html+'</div>'}
+function dateField(i,k){
+  const p=String(data[i][k]||'').split('/');
+  const y=faToEn(p[0]||''),m=faToEn(p[1]||''),d=faToEn(p[2]||'');
+  return '<div class="date-control" data-date-control="'+i+'-'+k+'">'+
+    '<input class="date-part" data-date-i="'+i+'" data-date-k="'+k+'" data-part="y" inputmode="numeric" maxlength="4" placeholder="۱۴۰۵" value="'+esc(y)+'">'+
+    '<span class="date-sep">/</span>'+
+    '<input class="date-part" data-date-i="'+i+'" data-date-k="'+k+'" data-part="m" inputmode="numeric" maxlength="2" placeholder="۰۶" value="'+esc(m)+'">'+
+    '<span class="date-sep">/</span>'+
+    '<input class="date-part" data-date-i="'+i+'" data-date-k="'+k+'" data-part="d" inputmode="numeric" maxlength="2" placeholder="۰۷" value="'+esc(d)+'">'+
+    '<button class="calendar-btn" type="button" aria-label="انتخاب تاریخ از تقویم شمسی" onclick="openCalendar(event,'+i+',\''+k+'\')"><svg viewBox="0 0 24 24" fill="none"><rect x="3" y="5" width="18" height="16" rx="2" stroke="currentColor" stroke-width="2"/><path d="M16 3v4M8 3v4M3 10h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>'+
+  '</div>';
+}
+function timeField(i,k){
+  const p=String(data[i][k]||'').split(':');
+  return '<div class="time-control">'+
+    '<input class="time-part" data-time-i="'+i+'" data-time-k="'+k+'" data-part="h" inputmode="numeric" maxlength="2" placeholder="۱۴" value="'+esc(faToEn(p[0]||''))+'">'+
+    '<span class="time-sep">:</span>'+
+    '<input class="time-part" data-time-i="'+i+'" data-time-k="'+k+'" data-part="min" inputmode="numeric" maxlength="2" placeholder="۳۰" value="'+esc(faToEn(p[1]||''))+'">'+
+  '</div>';
+}
+function check(i,k,label){return '<label><input type="checkbox" data-i="'+i+'" data-k="'+k+'" '+(data[i][k]?'checked':'')+'><span>'+label+'</span></label>'}
+function doneToggle(i,section){return '<label class="done-toggle"><input type="checkbox" data-done-i="'+i+'" data-section="'+section+'" '+(data[i].done[section]?'checked':'')+'><span>انجام شد</span></label>'}
+function tagChip(id,removable,i,section){
+  const t=tags.find(x=>x.id===id);if(!t)return '';
+  const remove=removable?'<button type="button" aria-label="حذف تگ" onclick="event.stopPropagation();removeSectionTag('+i+',\''+section+'\',\''+id+'\')">×</button>':'';
+  return '<span class="person-tag"><span>'+esc(t.name)+'</span>'+remove+'</span>';
+}
+function ownerNames(i,section){
+  return (data[i].sectionTags[section]||[]).map(id=>tags.find(t=>t.id===id)?.name||'').filter(Boolean)
+}
+function ownerDisplay(i,section){return ownerNames(i,section).join(' و ')}
+function syncOwnerValue(i,section,ownerKey=OWNER_KEYS[section]){
+  if(!ownerKey)return;
+  const names=ownerDisplay(i,section);
+  data[i][ownerKey]=names||'';
+}
+function ownerField(i,section,ownerKey,tagEnabled=true){
+  if(!tagEnabled)return text(i,ownerKey,'نام مسئول');
+  const assigned=data[i].sectionTags[section]||[];
+  const chips=assigned.map(id=>tagChip(id,true,i,section)).join('');
+  const display=ownerDisplay(i,section);
+  const shown=display||data[i][ownerKey]||'';
+  const cls=display?' assigned-display':'';
+  return '<div class="owner-control" data-owner-wrap="'+i+'-'+section+'">'+
+    '<input class="owner-input'+cls+'" data-i="'+i+'" data-k="'+ownerKey+'" data-owner-i="'+i+'" data-owner-section="'+section+'" placeholder="نام مسئول" value="'+esc(shown)+'" title="'+esc(display||shown)+'" autocomplete="off">'+
+    '<button class="owner-picker-btn" type="button" aria-label="انتخاب تگ نیرو" onclick="toggleOwnerMenu(event,'+i+',\''+section+'\',\''+ownerKey+'\')"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="2"/><path d="M4 21a8 8 0 0 1 16 0" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>'+
+    '<div class="owner-menu" data-owner-menu="'+i+'-'+section+'"></div>'+
+    '<div class="owner-assigned">'+chips+'</div>'+
+  '</div>';
+}
+function projectPeople(i){
+  const ids=[];['prep','time','audio','edit','cover','publish','ads'].forEach(s=>(data[i].sectionTags[s]||[]).forEach(id=>{if(!ids.includes(id))ids.push(id)}));
+  const chips=ids.map(id=>tagChip(id,false,i,'content')).join('');
+  return '<div class="project-people"><div class="label">نیروهای درگیر پروژه</div><div class="tag-chips">'+(chips||'<span class="empty-hint">هنوز نیرویی به این پروژه اختصاص داده نشده است.</span>')+'</div></div>';
+}
+function workflowCell(i,section,receivedKey,ownerKey,dueKey){return '<div class="cell '+(data[i].done[section]?'done':'')+'" data-section="'+section+'">'+
+  field('تاریخ دریافت سفارش',dateField(i,receivedKey))+field('نام مسئول',ownerField(i,section,ownerKey,true))+field('موعد تحویل',dateField(i,dueKey))+doneToggle(i,section)+'</div>'}
+function row(i){
+  return '<div class="content-card" data-row="'+i+'">'+
+    '<div class="cell" data-section="content"><span class="title-tag">پروژه '+toFa(String(i+1).padStart(2,'0'))+'</span>'+field('عنوان پروژه',area(i,'topic','موضوع / عنوان پروژه'))+projectPeople(i)+'<button class="btn danger delete-content" type="button" onclick="askDelete('+i+')">حذف پروژه</button></div>'+
+    workflowCell(i,'prep','prepReceived','prepOwner','prepDue')+
+    workflowCell(i,'time','timeReceived','timeOwner','timeDue')+
+    workflowCell(i,'audio','audioReceived','audioOwner','audioDue')+
+    workflowCell(i,'edit','editReceived','editOwner','editDue')+
+    workflowCell(i,'cover','coverReceived','coverOwner','coverDue')+
+    '<div class="cell '+(data[i].done.publish?'done':'')+'" data-section="publish">'+field('تاریخ ارسال برای ادمین',dateField(i,'adminDate'))+field('نام مسئول',ownerField(i,'publish','publishOwner',true))+field('آماده‌سازی کپشن',text(i,'caption','وضعیت / توضیح کپشن'))+field('روز انتشار',dateField(i,'publishDate'))+field('ساعت انتشار',timeField(i,'publishTime'))+doneToggle(i,'publish')+'</div>'+
+    '<div class="cell '+(data[i].done.ads?'done':'')+'" data-section="ads">'+field('نام مسئول',ownerField(i,'ads','adsOwner',true))+'<div class="check">'+check(i,'pin','پین کردن')+check(i,'story','استوری کردن')+check(i,'collab','پست مشترک')+check(i,'repost','ری‌پست')+'</div>'+doneToggle(i,'ads')+'</div>'+
+  '</div>';
+}
+function render(){
+  document.getElementById('rows').innerHTML=data.map((_,i)=>row(i)).join('');
+  renderPeoplePanel();bindInputs();bindOwnerInputs();applyAllDoneStates();filterRows();applyRoleUI();
+}
+function bindInputs(){
+  document.querySelectorAll('[data-i][data-k]').forEach(el=>{
+    const update=function(){data[+this.dataset.i][this.dataset.k]=this.type==='checkbox'?this.checked:this.value;save();filterRows()};
+    el.addEventListener('input',function(){if(this.type!=='checkbox')update.call(this)});
+    el.addEventListener('change',update);
+  });
+  document.querySelectorAll('[data-done-i]').forEach(el=>el.addEventListener('change',function(){
+    const i=+this.dataset.doneI,section=this.dataset.section;data[i].done[section]=this.checked;save();
+    const cell=this.closest('.cell');cell.classList.toggle('done',this.checked);applyDoneState(cell,this.checked);filterRows();
+    if(this.checked&&isProjectComplete(i))askCompletedProjectDelete(i);
+  }));
+  document.querySelectorAll('.date-part').forEach(el=>el.addEventListener('input',handleDatePart));
+  document.querySelectorAll('.time-part').forEach(el=>el.addEventListener('input',handleTimePart));
+}
+function applyDoneState(cell,isDone){
+  if(!cell)return;
+  cell.querySelectorAll('input,textarea,select,button').forEach(el=>{
+    if(el.matches('[data-done-i]')){el.disabled=false;return}
+    el.disabled=!!isDone;
+  });
+  if(isDone)cell.querySelectorAll('.owner-menu.open').forEach(x=>x.classList.remove('open'));
+}
+function applyAllDoneStates(){document.querySelectorAll('.content-card .cell').forEach(cell=>{const s=cell.dataset.section;if(s&&s!=='content')applyDoneState(cell,!!data[+cell.closest('.content-card').dataset.row].done[s])})}
+function ownerMatches(query){const q=normalizeSearch(query);return tags.filter(t=>!q||normalizeSearch(t.name).includes(q)).slice(0,30)}
+function renderOwnerMenu(i,section,ownerKey,query=''){
+  const menu=document.querySelector('[data-owner-menu="'+i+'-'+section+'"]');if(!menu)return;
+  const assigned=data[i].sectionTags[section]||[];const matches=ownerMatches(query);
+  if(!tags.length){menu.innerHTML='<div class="owner-empty">ابتدا از «مدیریت تگ‌ها» نام نیروها را اضافه کنید.</div>';return}
+  if(!matches.length){menu.innerHTML='<div class="owner-empty">تگ مشابهی پیدا نشد.</div>';return}
+  menu.innerHTML=matches.map(t=>'<button class="owner-option '+(assigned.includes(t.id)?'active':'')+'" type="button" onclick="selectOwnerTag(event,'+i+',\''+section+'\',\''+ownerKey+'\',\''+t.id+'\')">'+esc(t.name)+(assigned.includes(t.id)?' ✓':'')+'</button>').join('');
+}
+function toggleOwnerMenu(event,i,section,ownerKey){
+  event.preventDefault();event.stopPropagation();
+  const wrap=document.querySelector('[data-owner-wrap="'+i+'-'+section+'"]');if(!wrap)return;
+  const menu=wrap.querySelector('.owner-menu');
+  if(menu.classList.contains('open')){menu.classList.remove('open');return}
+  closeOwnerMenus(menu);renderOwnerMenu(i,section,ownerKey,'');menu.classList.add('open');
+}
+function selectOwnerTag(event,i,section,ownerKey,id){
+  event.preventDefault();event.stopPropagation();const t=tags.find(x=>x.id===id);if(!t)return;
+  const assigned=data[i].sectionTags[section]||[];
+  if(assigned.includes(id))data[i].sectionTags[section]=assigned.filter(x=>x!==id);
+  else data[i].sectionTags[section].push(id);
+  syncOwnerValue(i,section,ownerKey);save();render();
+}
+function removeSectionTag(i,section,id){
+  data[i].sectionTags[section]=data[i].sectionTags[section].filter(x=>x!==id);syncOwnerValue(i,section);save();render()
+}
+function bindOwnerInputs(){
+  document.querySelectorAll('.owner-input[data-owner-i]').forEach(inp=>{
+    inp.addEventListener('focus',function(){
+      const i=+this.dataset.ownerI,section=this.dataset.ownerSection,display=ownerDisplay(i,section);
+      if(display){this.value='';this.classList.remove('assigned-display');this.removeAttribute('title');this.dataset.ownerEditing='1'}
+      renderOwnerMenu(i,section,this.dataset.k,this.value);this.closest('.owner-control').querySelector('.owner-menu').classList.add('open');
+    });
+    inp.addEventListener('input',function(){
+      this.classList.remove('assigned-display');this.dataset.ownerEditing='1';
+      renderOwnerMenu(+this.dataset.ownerI,this.dataset.ownerSection,this.dataset.k,this.value);this.closest('.owner-control').querySelector('.owner-menu').classList.add('open');
+    });
+    inp.addEventListener('blur',function(){
+      const el=this;setTimeout(()=>{
+        if(!document.body.contains(el))return;
+        const i=+el.dataset.ownerI,section=el.dataset.ownerSection,display=ownerDisplay(i,section);
+        if(display){el.value=display;el.classList.add('assigned-display');el.title=display;data[i][el.dataset.k]=display;save()}
+        delete el.dataset.ownerEditing;
+      },100)
+    });
+    inp.addEventListener('keydown',function(e){
+      if(e.key==='Escape'){this.closest('.owner-control').querySelector('.owner-menu').classList.remove('open');this.blur()}
+      if(e.key==='Enter'){const first=this.closest('.owner-control').querySelector('.owner-option');if(first){e.preventDefault();first.click()}}
+    });
+  });
+}
+function closeOwnerMenus(except){document.querySelectorAll('.owner-menu.open').forEach(m=>{if(m!==except)m.classList.remove('open')})}
+
+function onlyDigits(v,max){return faToEn(v).replace(/\D/g,'').slice(0,max)}
+function handleDatePart(){
+  const max=this.dataset.part==='y'?4:2;this.value=onlyDigits(this.value,max);
+  const wrap=this.closest('.date-control');const parts=[...wrap.querySelectorAll('.date-part')];
+  if(this.value.length===max){const idx=parts.indexOf(this);if(parts[idx+1])parts[idx+1].focus()}
+  const vals=parts.map(x=>x.value);data[+this.dataset.dateI][this.dataset.dateK]=vals.some(Boolean)?vals.join('/'):'';save();filterRows();
+}
+function handleTimePart(){
+  this.value=onlyDigits(this.value,2);
+  if(this.dataset.part==='h'&&this.value.length===2)this.parentElement.querySelector('[data-part="min"]').focus();
+  let h=this.parentElement.querySelector('[data-part="h"]').value,m=this.parentElement.querySelector('[data-part="min"]').value;
+  if(h&&+h>23){h='23';this.parentElement.querySelector('[data-part="h"]').value=h}if(m&&+m>59){m='59';this.parentElement.querySelector('[data-part="min"]').value=m}
+  data[+this.dataset.timeI][this.dataset.timeK]=(h||m)?h+':'+m:'';save();filterRows();
+}
+function addRow(){data.push(blank());save();render();setTimeout(()=>{const cards=document.querySelectorAll('.content-card');cards[cards.length-1]?.scrollIntoView({behavior:'smooth',block:'center'})},30)}
+function projectTitle(i){return ((data[i]&&data[i].topic)||'').trim()||'بدون عنوان'}
+function isProjectComplete(i){return !!data[i]&&['prep','time','audio','edit','cover','publish','ads'].every(section=>!!data[i].done[section])}
+function prepareDeleteModal(i,reason){
+  pendingDeleteIndex=i;pendingDeleteTitle=projectTitle(i);pendingDeleteReason=reason||'manual';
+  const title=document.getElementById('confirmTitle'),text=document.getElementById('confirmText');
+  if(pendingDeleteReason==='completed'){
+    title.textContent='اتمام پروژه';
+    text.textContent='پروژه «'+pendingDeleteTitle+'» به اتمام رسید. آیا می‌خواهید این پروژه را حذف کنید؟';
+  }else{
+    title.textContent='حذف پروژه';
+    text.textContent='آیا از حذف پروژه «'+pendingDeleteTitle+'» مطمئنید؟';
+  }
+  openModal('confirmModal');
+}
+function askDelete(i){prepareDeleteModal(i,'manual')}
+function askCompletedProjectDelete(i){prepareDeleteModal(i,'completed')}
+function showDeleteSuccess(title){
+  const modal=document.getElementById('successModal');
+  document.getElementById('successText').textContent='پروژه «'+title+'» با موفقیت حذف شد.';
+  openModal('successModal');
+  clearTimeout(successModalTimer);
+  successModalTimer=setTimeout(()=>closeModal('successModal'),1500);
+}
+function confirmDelete(){
+  if(pendingDeleteIndex===null||!data[pendingDeleteIndex])return;
+  const deletedTitle=pendingDeleteTitle||projectTitle(pendingDeleteIndex);
+  data.splice(pendingDeleteIndex,1);if(!data.length)data=[blank()];
+  pendingDeleteIndex=null;pendingDeleteTitle='';pendingDeleteReason='manual';
+  save();closeModal('confirmModal');render();showDeleteSuccess(deletedTitle);
+}
+function cancelDelete(){pendingDeleteIndex=null;pendingDeleteTitle='';pendingDeleteReason='manual';closeModal('confirmModal')}
+function syncModalLock(){document.body.classList.toggle('modal-open',!!document.querySelector('.modal-backdrop.open'))}
+function openModal(id){document.getElementById(id).classList.add('open');syncModalLock()}
+function closeModal(id){document.getElementById(id).classList.remove('open');syncModalLock()}
+function backdropClose(e,id){if(e.target===document.getElementById(id))closeModal(id)}
+function toast(msg){const el=document.getElementById('toast');el.textContent=msg;el.classList.add('show');clearTimeout(toast._t);toast._t=setTimeout(()=>el.classList.remove('show'),1800)}
+
+function newId(){return 't'+Date.now().toString(36)+Math.random().toString(36).slice(2,6)}
+function openTagManager(){renderTagManager();openModal('tagModal');setTimeout(()=>document.getElementById('newTagName').focus(),40)}
+function renderTagManager(){
+  const box=document.getElementById('tagManageList');
+  if(!tags.length){box.innerHTML='<div class="empty-hint">هنوز تگی ساخته نشده است.</div>';return}
+  box.innerHTML=tags.map(t=>'<div class="tag-manage-row"><input id="tag-edit-'+esc(t.id)+'" value="'+esc(t.name)+'" onkeydown="if(event.key===\'Enter\')renameTag(\''+t.id+'\')"><div class="row-actions"><button class="btn" type="button" onclick="renameTag(\''+t.id+'\')">ذخیره</button><button class="btn danger" type="button" onclick="deleteTag(\''+t.id+'\')">حذف</button></div></div>').join('')
+}
+function addTag(){
+  const inp=document.getElementById('newTagName');const name=inp.value.trim();if(!name)return;
+  if(tags.some(t=>normalizeSearch(t.name)===normalizeSearch(name))){toast('این تگ از قبل وجود دارد');return}
+  tags.push({id:newId(),name});inp.value='';save();renderTagManager();render();toast('تگ اضافه شد')
+}
+function renameTag(id){
+  const inp=document.getElementById('tag-edit-'+id);if(!inp)return;const name=inp.value.trim();if(!name){toast('نام تگ نمی‌تواند خالی باشد');return}
+  if(tags.some(t=>t.id!==id&&normalizeSearch(t.name)===normalizeSearch(name))){toast('تگی با این نام وجود دارد');return}
+  const t=tags.find(x=>x.id===id);if(t){const oldName=t.name;t.name=name;
+    data.forEach((r,ri)=>Object.entries(OWNER_KEYS).forEach(([section,key])=>{if((r.sectionTags[section]||[]).includes(id))syncOwnerValue(ri,section,key)}));
+  }save();renderTagManager();render();toast('تگ ویرایش شد')
+}
+function deleteTag(id){
+  const t=tags.find(x=>x.id===id);if(!t)return;
+  if(!confirm('تگ «'+t.name+'» حذف شود؟'))return;
+  tags=tags.filter(x=>x.id!==id);data.forEach((r,ri)=>SECTION_KEYS.forEach(s=>{const had=(r.sectionTags[s]||[]).includes(id);r.sectionTags[s]=r.sectionTags[s].filter(x=>x!==id);if(had&&OWNER_KEYS[s])syncOwnerValue(ri,s,OWNER_KEYS[s])}));
+  if(activePersonTag===id)activePersonTag='';save();renderTagManager();render();toast('تگ حذف شد')
+}
+function togglePeoplePanel(){const p=document.getElementById('peoplePanel'),b=document.getElementById('peopleToggle');p.classList.toggle('open');b.classList.toggle('active',p.classList.contains('open'));renderPeoplePanel()}
+function renderPeoplePanel(){
+  const p=document.getElementById('peoplePanel');
+  if(!tags.length){p.innerHTML='<div class="empty-hint">برای مشاهده وظایف فردی، ابتدا از «مدیریت تگ‌ها» نام نیروها را اضافه کنید.</div>';return}
+  p.innerHTML=tags.map(t=>{
+    if(activePersonTag===t.id)return '<button class="filter-chip active" onclick="selectPersonTag(\''+t.id+'\')">'+esc(t.name)+'<span class="clear-filter" title="حذف فیلتر" onclick="event.stopPropagation();clearPersonFilter()">×</span></button>';
+    return '<button class="filter-chip" onclick="selectPersonTag(\''+t.id+'\')">'+esc(t.name)+'</button>';
+  }).join('')
+}
+function selectPersonTag(id){activePersonTag=id;renderPeoplePanel();filterRows()}
+function clearPersonFilter(){activePersonTag='';renderPeoplePanel();filterRows()}
+function sectionSearchText(row,section){
+  const tagNames=(row.sectionTags[section]||[]).map(id=>tags.find(t=>t.id===id)?.name||'');
+  const map={
+    content:[row.topic],prep:[row.prepReceived,row.prepOwner,row.prepDue],time:[row.timeReceived,row.timeOwner,row.timeDue],audio:[row.audioReceived,row.audioOwner,row.audioDue],edit:[row.editReceived,row.editOwner,row.editDue],cover:[row.coverReceived,row.coverOwner,row.coverDue],publish:[row.adminDate,row.publishOwner,row.caption,row.publishDate,row.publishTime],ads:[row.adsOwner,row.pin?'پین کردن':'',row.story?'استوری کردن':'',row.collab?'پست مشترک':'',row.repost?'ری‌پست':'']
+  };
+  return normalizeSearch([SECTION_LABELS[section],...(map[section]||[]),...tagNames,row.done[section]?'انجام شد':''].join(' '))
+}
+function rowSearchText(row){return SECTION_KEYS.map(s=>sectionSearchText(row,s)).join(' ')}
+function clearSearch(){
+  const input=document.getElementById('search');if(!input)return;
+  input.value='';filterRows();input.focus();
+}
+function syncSearchClear(){
+  const input=document.getElementById('search'),btn=document.getElementById('searchClear');
+  if(btn)btn.classList.toggle('show',!!(input&&input.value));
+}
+function filterRows(){
+  syncSearchClear();
+  const q=normalizeSearch(document.getElementById('search').value);let visibleCount=0;
+  document.querySelectorAll('.content-card').forEach(card=>{
+    const i=+card.dataset.row,row=data[i];let showRow=false;
+    const cells=[...card.querySelectorAll('.cell')];
+    if(activePersonTag){
+      const involved=['prep','time','audio','edit','cover','publish','ads'].some(s=>(row.sectionTags[s]||[]).includes(activePersonTag));
+      cells.forEach(cell=>{
+        const s=cell.dataset.section;let tagged=s==='content'?involved:(row.sectionTags[s]||[]).includes(activePersonTag);
+        const matches=!q||(s==='content'?rowSearchText(row).includes(q):sectionSearchText(row,s).includes(q));const show=tagged&&matches;
+        cell.classList.toggle('filtered-out',!show);if(show)showRow=true;
+      });
+    }else{
+      const matches=!q||rowSearchText(row).includes(q);cells.forEach(c=>c.classList.remove('filtered-out'));showRow=matches;
+    }
+    card.style.display=showRow?'grid':'none';if(showRow)visibleCount++;
+  });
+  document.getElementById('noResults').classList.toggle('show',visibleCount===0)
+}
+
+function applyRoleUI(){
+  document.body.classList.toggle('viewer',!isAdmin);
+  document.body.classList.toggle('admin',isAdmin);
+  const badge=document.getElementById('roleBadge');
+  if(badge){badge.textContent=isAdmin?'مدیر':'بیننده';badge.classList.toggle('viewer',!isAdmin)}
+  if(!isAdmin){
+    document.querySelectorAll('.content-card input,.content-card textarea,.content-card select,.content-card button').forEach(el=>el.disabled=true);
+  }else{
+    applyAllDoneStates();
+  }
+}
+function showAuthScreen(message=''){
+  document.getElementById('authScreen').classList.remove('hidden');
+  document.getElementById('accountBar').classList.remove('show');
+  document.getElementById('loginError').textContent=message;
+  onlineReady=false;
+}
+function showOnlineApp(){
+  document.getElementById('authScreen').classList.add('hidden');
+  document.getElementById('accountBar').classList.add('show');
+  document.getElementById('accountEmail').textContent=currentUser?.email||'';
+}
+async function loadProfileRole(){
+  const {data:profile,error}=await sb.from('profiles').select('role,display_name').eq('id',currentUser.id).single();
+  if(error)throw error;
+  currentRole=profile?.role==='admin'?'admin':'viewer';isAdmin=currentRole==='admin';
+}
+async function fetchCalendarState(){
+  const {data:row,error}=await sb.from('calendar_state').select('payload,updated_at').eq('id',1).single();
+  if(error)throw error;
+  const p=row?.payload||{};
+  data=Array.isArray(p.data)?p.data.map(normalizeRow):[];
+  tags=Array.isArray(p.tags)?p.tags:[];
+  if(!data.length)data=[blank()];
+  lastServerUpdatedAt=row?.updated_at||lastServerUpdatedAt;
+  try{localStorage.setItem(KEY,JSON.stringify({data,tags}))}catch(e){}
+}
+function setupRealtime(){
+  if(realtimeChannel)sb.removeChannel(realtimeChannel);
+  realtimeChannel=sb.channel('calendar-live-'+Math.random().toString(36).slice(2)).on(
+    'postgres_changes',
+    {event:'UPDATE',schema:'public',table:'calendar_state',filter:'id=eq.1'},
+    payload=>{
+      lastServerUpdatedAt=payload?.new?.updated_at||lastServerUpdatedAt;
+      const p=payload?.new?.payload||{};
+      const incomingData=Array.isArray(p.data)?p.data.map(normalizeRow):[];
+      const incomingTags=Array.isArray(p.tags)?p.tags:[];
+      const incoming={data:incomingData.length?incomingData:[blank()],tags:incomingTags};
+      const current={data,tags};
+      if(JSON.stringify(incoming)===JSON.stringify(current))return;
+      data=incoming.data;tags=incoming.tags;
+      try{localStorage.setItem(KEY,JSON.stringify({data,tags}))}catch(e){}
+      render();setSyncState('به‌روز شد','ok');
+    }
+  ).subscribe(status=>{
+    if(status==='SUBSCRIBED')setSyncState('آنلاین','ok');
+    else if(status==='CHANNEL_ERROR'||status==='TIMED_OUT')setSyncState('همگام‌سازی خودکار فعال','ok');
+  });
+  startFallbackPolling();
+}
+async function pollCalendarState(){
+  if(!onlineReady||!currentUser||pollBusy||saveInFlight||saveTimer)return;
+  pollBusy=true;
+  try{
+    const {data:row,error}=await sb.from('calendar_state').select('updated_at').eq('id',1).single();
+    if(error)throw error;
+    const stamp=row?.updated_at||'';
+    if(stamp&&stamp!==lastServerUpdatedAt){
+      await fetchCalendarState();
+      render();
+      setSyncState('به‌روز شد','ok');
+    }
+  }catch(err){
+    console.warn('background sync:',err);
+  }finally{pollBusy=false}
+}
+function startFallbackPolling(){
+  if(pollTimer)clearInterval(pollTimer);
+  pollTimer=setInterval(pollCalendarState,1500);
+}
+function stopFallbackPolling(){
+  if(pollTimer){clearInterval(pollTimer);pollTimer=null}
+}
+async function enterOnlineApp(user){
+  currentUser=user;setSyncState('در حال بارگذاری…');
+  try{
+    await loadProfileRole();
+    await fetchCalendarState();
+    onlineReady=true;showOnlineApp();render();setupRealtime();
+  }catch(err){
+    console.error(err);showAuthScreen('ورود انجام شد اما بارگذاری اطلاعات ممکن نشد. دوباره تلاش کنید.');
+  }
+}
+async function logoutOnline(){
+  onlineReady=false;stopFallbackPolling();
+  if(realtimeChannel){await sb.removeChannel(realtimeChannel);realtimeChannel=null}
+  await sb.auth.signOut();currentUser=null;currentRole='viewer';isAdmin=false;
+  data=[];tags=[];document.getElementById('rows').innerHTML='';showAuthScreen('');
+}
+async function initOnlineApp(){
+  const form=document.getElementById('loginForm');
+  form.addEventListener('submit',async e=>{
+    e.preventDefault();
+    const email=document.getElementById('loginEmail').value.trim();
+    const password=document.getElementById('loginPassword').value;
+    const btn=document.getElementById('loginButton'),err=document.getElementById('loginError');
+    btn.disabled=true;btn.textContent='در حال ورود…';err.textContent='';
+    const {data:authData,error}=await sb.auth.signInWithPassword({email,password});
+    btn.disabled=false;btn.textContent='ورود';
+    if(error){err.textContent='ایمیل یا رمز عبور صحیح نیست.';return}
+    await enterOnlineApp(authData.user);
+  });
+  const {data:sessionData}=await sb.auth.getSession();
+  if(sessionData?.session?.user)await enterOnlineApp(sessionData.session.user);else showAuthScreen('');
+  sb.auth.onAuthStateChange((event,session)=>{
+    if(event==='SIGNED_OUT')showAuthScreen('');
+  });
+}
+
+/* Jalali calendar — self contained */
+function div(a,b){return ~~(a/b)}function mod(a,b){return a-~~(a/b)*b}
+function jalCal(jy,withoutLeap){
+  const breaks=[-61,9,38,199,426,686,756,818,1111,1181,1210,1635,2060,2097,2192,2262,2324,2394,2456,3178];let bl=breaks.length,gy=jy+621,leapJ=-14,jp=breaks[0],jm,jump,leap,leapG,march,n;
+  if(jy<jp||jy>=breaks[bl-1])throw new Error('Invalid Jalaali year '+jy);
+  for(let i=1;i<bl;i++){jm=breaks[i];jump=jm-jp;if(jy<jm)break;leapJ+=div(jump,33)*8+div(mod(jump,33),4);jp=jm}
+  n=jy-jp;leapJ+=div(n,33)*8+div(mod(n,33)+3,4);if(mod(jump,33)===4&&jump-n===4)leapJ++;
+  leapG=div(gy,4)-div((div(gy,100)+1)*3,4)-150;march=20+leapJ-leapG;if(withoutLeap)return{gy,march};
+  if(jump-n<6)n=n-jump+div(jump+4,33)*33;leap=mod(mod(n+1,33)-1,4);if(leap===-1)leap=4;return{leap,gy,march}
+}
+function g2d(gy,gm,gd){let d=div((gy+div(gm-8,6)+100100)*1461,4)+div(153*mod(gm+9,12)+2,5)+gd-34840408;d=d-div(div(gy+100100+div(gm-8,6),100)*3,4)+752;return d}
+function d2g(jdn){let j=4*jdn+139361631;j=j+div(div(4*jdn+183187720,146097)*3,4)*4-3908;let i=div(mod(j,1461),4)*5+308;let gd=div(mod(i,153),5)+1;let gm=mod(div(i,153),12)+1;let gy=div(j,1461)-100100+div(8-gm,6);return{gy,gm,gd}}
+function j2d(jy,jm,jd){let r=jalCal(jy,true);return g2d(r.gy,3,r.march)+(jm-1)*31-div(jm,7)*(jm-7)+jd-1}
+function d2j(jdn){let g=d2g(jdn),jy=g.gy-621,r=jalCal(jy,false),jdn1f=g2d(g.gy,3,r.march),k=jdn-jdn1f,jm,jd;if(k>=0){if(k<=185){jm=1+div(k,31);jd=mod(k,31)+1;return{jy,jm,jd}}k-=186}else{jy-=1;k+=179;if(r.leap===1)k+=1}jm=7+div(k,30);jd=mod(k,30)+1;return{jy,jm,jd}}
+function toJalaali(gy,gm,gd){return d2j(g2d(gy,gm,gd))}
+function toGregorian(jy,jm,jd){return d2g(j2d(jy,jm,jd))}
+function isLeapJalaaliYear(jy){return jalCal(jy,false).leap===0}
+function jMonthLength(jy,jm){if(jm<=6)return 31;if(jm<=11)return 30;return isLeapJalaaliYear(jy)?30:29}
+function todayJalali(){const n=new Date(),j=toJalaali(n.getFullYear(),n.getMonth()+1,n.getDate());return j}
+function openCalendar(event,i,k){
+  event.preventDefault();event.stopPropagation();
+  const pop=document.getElementById('calendarPopup');
+  if(pop.classList.contains('open')&&calendarTarget&&calendarTarget.i===i&&calendarTarget.k===k){pop.classList.remove('open');calendarTarget=null;return}
+  calendarTarget={i,k,button:event.currentTarget};const raw=faToEn(data[i][k]||'');const p=raw.split('/');let jy=+p[0],jm=+p[1];if(!jy||!jm){const t=todayJalali();jy=t.jy;jm=t.jm}calView={jy,jm};renderCalendar();positionCalendar(event.currentTarget)
+}
+function positionCalendar(btn){const pop=document.getElementById('calendarPopup'),r=btn.getBoundingClientRect();pop.classList.add('open');const w=288,h=330;let left=Math.min(window.innerWidth-w-10,Math.max(10,r.left-w+30));let top=r.bottom+7;if(top+h>window.innerHeight)top=Math.max(10,r.top-h-7);pop.style.left=left+'px';pop.style.top=top+'px'}
+function renderCalendar(){
+  const names=['فروردین','اردیبهشت','خرداد','تیر','مرداد','شهریور','مهر','آبان','آذر','دی','بهمن','اسفند'];const week=['ش','ی','د','س','چ','پ','ج'];const {jy,jm}=calView;
+  const g=toGregorian(jy,jm,1),first=new Date(g.gy,g.gm-1,g.gd),offset=(first.getDay()+1)%7,len=jMonthLength(jy,jm),today=todayJalali();
+  const selected=calendarTarget?faToEn(data[calendarTarget.i][calendarTarget.k]||''):'';
+  let days='';for(let x=0;x<offset;x++)days+='<button class="cal-day empty" tabindex="-1"></button>';
+  for(let d=1;d<=len;d++){const val=jy+'/'+String(jm).padStart(2,'0')+'/'+String(d).padStart(2,'0');const cls=['cal-day'];if(today.jy===jy&&today.jm===jm&&today.jd===d)cls.push('today');if(selected===val)cls.push('selected');days+='<button class="'+cls.join(' ')+'" type="button" onclick="pickCalendarDate('+d+')">'+toFa(d)+'</button>'}
+  document.getElementById('calendarPopup').innerHTML='<div class="cal-head"><button type="button" aria-label="ماه بعد" onclick="changeCalMonth(event,1)"><svg viewBox="0 0 24 24" width="16" height="16" fill="none"><path d="m9 18 6-6-6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button><div class="cal-title">'+names[jm-1]+' '+toFa(jy)+'</div><button type="button" aria-label="ماه قبل" onclick="changeCalMonth(event,-1)"><svg viewBox="0 0 24 24" width="16" height="16" fill="none"><path d="m15 18-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div><div class="cal-week">'+week.map(x=>'<div>'+x+'</div>').join('')+'</div><div class="cal-days">'+days+'</div><div class="cal-footer"><button type="button" onclick="pickToday()">امروز</button></div>'
+}
+function changeCalMonth(event,delta){if(event){event.preventDefault();event.stopPropagation()}let y=calView.jy,m=calView.jm+delta;if(m>12){m=1;y++}if(m<1){m=12;y--}calView={jy:y,jm:m};renderCalendar()}
+function pickCalendarDate(d){if(!calendarTarget)return;setCalendarValue(calView.jy,calView.jm,d)}
+function pickToday(){const t=todayJalali();setCalendarValue(t.jy,t.jm,t.jd)}
+function setCalendarValue(y,m,d){
+  const {i,k}=calendarTarget;data[i][k]=y+'/'+String(m).padStart(2,'0')+'/'+String(d).padStart(2,'0');save();document.getElementById('calendarPopup').classList.remove('open');calendarTarget=null;render()
+}
+document.addEventListener('click',e=>{const p=document.getElementById('calendarPopup');if(p.classList.contains('open')&&!p.contains(e.target)&&!e.target.closest('.calendar-btn')){p.classList.remove('open');calendarTarget=null}if(!e.target.closest('.owner-control'))closeOwnerMenus()})
+window.addEventListener('resize',()=>{document.getElementById('calendarPopup').classList.remove('open');calendarTarget=null})
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){document.getElementById('calendarPopup').classList.remove('open');closeModal('tagModal');closeModal('confirmModal');closeModal('successModal')}})
+
+function downloadHTML(){
+  save();const clone=document.documentElement.cloneNode(true);clone.querySelectorAll('.modal-backdrop').forEach(x=>x.classList.remove('open'));clone.querySelector('#calendarPopup')?.classList.remove('open');
+  const old=clone.querySelector('#embedded-calendar-data');if(old)old.remove();const s=document.createElement('script');s.id='embedded-calendar-data';s.type='application/json';s.textContent=JSON.stringify({data,tags}).replace(/</g,'\\u003c');const mainScript=[...clone.querySelectorAll('script')].find(x=>x.type!=='application/json');if(mainScript)mainScript.parentNode.insertBefore(s,mainScript);else clone.querySelector('body').appendChild(s);
+  const blob=new Blob(['<!doctype html>\n'+clone.outerHTML],{type:'text/html;charset=utf-8'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='content-calendar-instagram.html';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),200);toast('فایل با اطلاعات فعلی ذخیره شد')
+}
+
+initOnlineApp();
+</script>
+</body>
+</html>
