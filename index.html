@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="light">
 <meta name="supported-color-schemes" content="light">
-<meta name="theme-color" content="#3132c0">
+<meta name="theme-color" content="#00B8D9">
 <title>تقویم محتوایی اینستاگرام | مهدیاران</title>
 <!-- CLEAN-V2-NO-HG-FAB: mobile responsive + strict light palette; online logic preserved -->
 <style>
@@ -26,14 +26,14 @@
 }
 *{box-sizing:border-box}
 html,body{max-width:100%;overflow-x:hidden;overflow-x:clip}
-body{margin:0;background:#3132c0;color:var(--ink);font-family:Vazirmatn,Tahoma,sans-serif}
+body{margin:0;background:#00B8D9;color:var(--ink);font-family:Vazirmatn,Tahoma,sans-serif}
 button,input,textarea,select{font:inherit}
 button{color:inherit}
 .wrap{width:100%;max-width:1900px;margin:auto;padding:24px clamp(12px,1.7vw,30px) 36px}
 .hero{display:flex;justify-content:space-between;align-items:flex-end;gap:18px;margin-bottom:18px}
 .hero-copy{min-width:240px}
-h1{margin:5px 0 3px;font-size:clamp(26px,2.2vw,38px);letter-spacing:-1px;color:#fff}
-.sub{margin:0;color:var(--mint);font-size:12px}
+h1{margin:5px 0 3px;font-size:clamp(26px,2.2vw,38px);letter-spacing:-1px;color:var(--dark)}
+.sub{margin:0;color:rgba(35,35,35,.72);font-size:12px;font-weight:600}
 .actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-start}
 .btn{border:1px solid var(--border);background:rgba(255,255,255,.82);border-radius:11px;padding:9px 13px;cursor:pointer;font-weight:700;color:var(--dark);transition:.18s ease;white-space:nowrap}
 .btn:hover{transform:translateY(-1px);border-color:var(--teal);box-shadow:0 6px 15px rgba(0,184,217,.14)}
@@ -52,13 +52,15 @@ h1{margin:5px 0 3px;font-size:clamp(26px,2.2vw,38px);letter-spacing:-1px;color:#
 .people-toggle.active{background:var(--brand);color:white;border-color:var(--brand)}
 .people-panel{width:100%;display:none;gap:7px;flex-wrap:wrap;padding-top:3px}
 .people-panel.open{display:flex}
-.tabs{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-start;margin:0 0 12px}
-.tab{display:inline-flex;align-items:center;gap:7px;border:1px solid rgba(35,35,35,.14);background:rgba(255,255,255,.86);color:var(--dark);border-radius:12px;padding:10px 15px;font-weight:800;font-size:12px;cursor:pointer;transition:.18s ease;box-shadow:0 5px 14px rgba(35,35,35,.08)}
-.tab:hover{transform:translateY(-1px);border-color:var(--brand)}
-.tab.active{background:var(--dark);border-color:var(--dark);color:#fff;box-shadow:0 9px 22px rgba(0,0,0,.28)}
-.tab-count{background:rgba(35,35,35,.10);border-radius:999px;min-width:22px;padding:2px 7px;font-size:10px;text-align:center;line-height:1.6}
-.tab.active .tab-count{background:rgba(255,255,255,.22);color:#fff}
-.sticky-top{position:sticky;top:0;z-index:850;padding:4px 0 7px;background:#3132c0}
+.page-layout{display:flex;gap:10px;align-items:flex-start;width:100%}
+.page-main{flex:1 1 auto;min-width:0}
+.tab-rail{position:sticky;top:0;z-index:860;flex:0 0 92px;width:92px;height:calc(100vh - 16px);max-height:760px;display:flex;flex-direction:column;gap:8px;padding:4px 0}
+.tab{flex:1 1 0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;min-height:76px;border:2px solid var(--sand);background:var(--dark);color:#fff;border-radius:14px;padding:10px 6px;font-weight:800;font-size:13px;line-height:1.5;text-align:center;cursor:pointer;transition:.18s ease;box-shadow:0 8px 18px rgba(35,35,35,.22)}
+.tab:hover{transform:translateX(-2px);box-shadow:0 10px 22px rgba(35,35,35,.30)}
+.tab.active{background:var(--sand);color:var(--dark);border-color:var(--dark)}
+.tab-count{background:rgba(255,255,255,.16);border-radius:999px;min-width:24px;padding:2px 8px;font-size:11px;text-align:center;line-height:1.6}
+.tab.active .tab-count{background:rgba(35,35,35,.14);color:var(--dark)}
+.sticky-top{position:sticky;top:0;z-index:850;padding:4px 0 7px;background:#00B8D9}
 .filter-chip{border:1px solid rgba(0,184,217,.35);background:var(--peach);padding:7px 11px;border-radius:999px;cursor:pointer;font-weight:700;font-size:11px}
 .filter-chip.active{background:var(--brand);color:#fff;border-color:var(--brand)}
 .filter-chip .clear-filter{border:0;background:rgba(255,255,255,.18);color:#fff;width:18px;height:18px;border-radius:50%;margin-right:5px;cursor:pointer;display:inline-grid;place-items:center;font-weight:900;line-height:1;padding:0}
@@ -113,8 +115,8 @@ textarea.edit{min-height:62px;resize:vertical;line-height:1.65}
 .done-toggle{margin-top:auto;font-size:10px;background:#FFBF03;border:1px solid rgba(35,35,35,.22);border-radius:8px;padding:7px;display:flex;gap:6px;align-items:center;cursor:pointer;font-weight:800;transition:.18s}
 .btn.danger.delete-content{margin-top:auto;width:100%;font-size:10px;padding:9px 8px;background:#232323;border:1px solid #232323;color:#fff;box-shadow:0 5px 14px rgba(35,35,35,.20)}
 .btn.danger.delete-content:hover{background:#d02d2d;border-color:#d02d2d;color:#fff;box-shadow:0 7px 18px rgba(208,45,45,.28)}
-.add{margin-top:8px;width:100%;border:2px dashed rgba(0,184,217,.45);background:rgba(0,184,217,.10);border-radius:14px;padding:13px;cursor:pointer;font-weight:800;color:var(--brand)}
-.add:hover{border-color:var(--teal);background:rgba(0,184,217,.18)}
+.add{margin-top:8px;width:100%;border:2px dashed rgba(35,35,35,.40);background:rgba(255,255,255,.50);border-radius:14px;padding:13px;cursor:pointer;font-weight:800;color:var(--dark)}
+.add:hover{border-color:var(--dark);background:rgba(255,255,255,.85)}
 .no-results{display:none;text-align:center;padding:30px 15px;background:rgba(255,255,255,.75);border:1px dashed rgba(35,35,35,.16);border-radius:14px;color:var(--muted);font-size:12px}
 .no-results.show{display:block}
 .modal-backdrop{position:fixed;inset:0;background:rgba(35,35,35,.55);display:none;align-items:center;justify-content:center;padding:18px;z-index:1000;backdrop-filter:blur(3px)}
@@ -157,12 +159,12 @@ body.modal-open{overflow:hidden}
   .hero{align-items:flex-start;flex-direction:column}.actions{width:100%}.grid{display:none}.content-card{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:8px}.cell{min-height:0}.cell.filtered-out{display:none}.toolbar{align-items:stretch}.search-wrap{max-width:none}.people-toggle{flex:1}.wrap{padding:14px 10px 28px}
 }
 @media(max-width:620px){.content-card{grid-template-columns:1fr}.actions .btn{flex:1}.calendar-popup{width:min(288px,calc(100vw - 20px))}}
-@media print{body{background:#fff}.toolbar,.actions,.add,.delete-content,.owner-picker-btn,.owner-menu,.person-tag button,.calendar-popup,.modal-backdrop,.toast{display:none!important}.grid{display:grid}.content-card{box-shadow:none;break-inside:avoid}.wrap{padding:0}.cell.filtered-out{visibility:visible}.sticky-top{position:static;background:transparent;padding:0}.tabs{display:none!important;}}
+@media print{body{background:#fff}.toolbar,.actions,.add,.delete-content,.owner-picker-btn,.owner-menu,.person-tag button,.calendar-popup,.modal-backdrop,.toast{display:none!important}.grid{display:grid}.content-card{box-shadow:none;break-inside:avoid}.wrap{padding:0}.cell.filtered-out{visibility:visible}.sticky-top{position:static;background:transparent;padding:0}.tab-rail{display:none!important}}
 
 /* ==================================================
    Online mode: Supabase Auth + Admin / Viewer
 ================================================== */
-.auth-screen{position:fixed;inset:0;z-index:5000;background:#3132c0;display:flex;align-items:center;justify-content:center;padding:20px}
+.auth-screen{position:fixed;inset:0;z-index:5000;background:#00B8D9;display:flex;align-items:center;justify-content:center;padding:20px}
 .auth-screen.hidden{display:none}
 .auth-card{width:min(430px,96vw);background:#F7F7F7;border:1px solid rgba(255,255,255,.45);border-radius:20px;box-shadow:0 28px 80px rgba(0,0,0,.28);padding:24px;direction:rtl}
 .auth-card h2{margin:0 0 7px;color:var(--dark);font-size:23px}
@@ -197,12 +199,12 @@ body.viewer .done-toggle{cursor:default}
 :root{color-scheme:only light}
 html{
   color-scheme:only light !important;
-  background:#3132c0;
+  background:#00B8D9;
   -webkit-text-size-adjust:100%;
   text-size-adjust:100%;
 }
 body,body *,button,input,textarea,select{color-scheme:only light !important}
-body{min-height:100dvh;background-color:#3132c0}
+body{min-height:100dvh;background-color:#00B8D9}
 input,textarea,select{-webkit-appearance:none;appearance:none}
 input[type="checkbox"]{-webkit-appearance:auto;appearance:auto}
 input:-webkit-autofill,
@@ -230,7 +232,7 @@ select:-webkit-autofill{
     --white:#fff;
     color-scheme:only light;
   }
-  html,body{background:#3132c0;color:#232323}
+  html,body{background:#00B8D9;color:#232323}
   .toolbar{background:rgba(247,247,247,.94)}
   .content-card{background:rgba(35,35,35,.24)}
   .cell{background:#F7F7F7;color:#232323}
@@ -416,9 +418,14 @@ select:-webkit-autofill{
   .auth-submit{height:48px;font-size:13px}
 }
 
+@media (max-width:980px){
+  .page-layout{flex-direction:column}
+  .tab-rail{position:static;width:100%;height:auto;max-height:none;flex:0 0 auto;flex-direction:row;overflow-x:auto;-webkit-overflow-scrolling:touch;gap:7px;padding:0 0 4px}
+  .tab{flex:1 0 100px;min-height:52px;flex-direction:row;font-size:12px;padding:8px 10px}
+  .tab:hover{transform:translateY(-1px)}
+}
+
 @media (max-width:768px){
-  .tabs{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:4px;gap:7px}
-  .tab{flex:0 0 auto;min-height:44px;font-size:12px;padding:10px 14px}
   .sticky-top{padding-top:2px}
   .grid{display:none!important}
 }
@@ -466,8 +473,10 @@ try{document.documentElement.style.setProperty('color-scheme','only light','impo
     </div>
   </section>
 
-  <div class="tabs" id="tabs" role="tablist" aria-label="دسته‌بندی محتوا"></div>
+  <div class="page-layout">
+  <div class="tab-rail" id="tabs" role="tablist" aria-label="دسته‌بندی محتوا"></div>
 
+  <div class="page-main">
   <div class="sticky-top">
   <div class="toolbar">
     <div class="search-wrap">
@@ -493,6 +502,8 @@ try{document.documentElement.style.setProperty('color-scheme','only light','impo
     <div id="noResults" class="no-results">موردی مطابق جستجو یا فیلتر انتخاب‌شده پیدا نشد.</div>
   </div>
   <button class="add" type="button" onclick="addRow()">＋ افزودن پروژه جدید</button>
+  </div>
+  </div>
 </div>
 
 <div id="tagModal" class="modal-backdrop" role="dialog" aria-modal="true" onclick="backdropClose(event,'tagModal')">
